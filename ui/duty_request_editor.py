@@ -56,6 +56,7 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
     nurse_names = [nurse.name for nurse in nurses]
     edited = st.data_editor(
         _request_frame(duty_requests),
+        key="duty_request_editor_v2",
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
