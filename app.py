@@ -72,7 +72,7 @@ if generate:
             int(month),
             requirements,
             off_target,
-            duty_requests=st.session_state.duty_requests,
+            duty_requests=st.session_state.get("duty_requests", []),
             time_limit_seconds=float(time_limit),
         )
         st.session_state.schedule_result = result

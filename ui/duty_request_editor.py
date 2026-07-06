@@ -37,6 +37,8 @@ def _request_frame(requests: list[DutyRequest]) -> pd.DataFrame:
 
 def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
     st.subheader("듀티 신청")
+    if "duty_requests" not in st.session_state:
+        st.session_state.duty_requests = []
 
     days = month_dates(year, month)
     date_options = [_date_label(day) for day in days]
