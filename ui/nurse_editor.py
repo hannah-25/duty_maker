@@ -18,10 +18,26 @@ def _request_summary_by_nurse() -> dict[str, str]:
     result: dict[str, list[str]] = {}
     for req in st.session_state.get("duty_requests", []):
         kind = "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망"
-        decision = "미반영" if getattr(req, "decision", "force") == "ignore" else "강제"
-        text = f"{req.day.month}/{req.day.day} {req.requested_shift.value} {kind}({decision})"
+        text = f"{req.day.month}/{req.day.day} {req.requested_shift.value} {kind}"
+        if getattr(req, "decision", "force") == "ignore":
+            text = f"~~{text} (미반영)~~"
         result.setdefault(req.nurse_name, []).append(text)
     return {name: ", ".join(items) for name, items in result.items()}
+
+
+def _render_request_summary() -> None:
+    requests = st.session_state.get("duty_requests", [])
+    if not requests:
+        return
+    st.caption("신청 요약")
+    rows = ["| 이름 | 신청 |", "|---|---|"]
+    for req in requests:
+        kind = "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망"
+        text = f"{req.day.month}/{req.day.day} {req.requested_shift.value} {kind}"
+        if getattr(req, "decision", "force") == "ignore":
+            text = f"~~{text} (미반영)~~"
+        rows.append(f"| {req.nurse_name} | {text} |")
+    st.markdown("\n".join(rows))
 
 
 def render_nurse_editor() -> list[Nurse]:
@@ -95,4 +111,5 @@ def render_nurse_editor() -> list[Nurse]:
         )
 
     st.session_state.nurses = updated
+    _render_request_summary()
     return updated

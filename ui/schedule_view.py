@@ -11,6 +11,7 @@ from core.models import ShiftType, month_dates
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
 HOLIDAY_STYLE = "background-color: rgba(255,132,58,0.8);"
 REQUEST_HONORED_STYLE = "color: #1D4ED8; font-weight: 800;"
+IGNORED_REQUEST_STYLE = "color: #94A3B8; text-decoration: line-through;"
 DECISION_LABELS = {
     "강제반영": "force",
     "미반영": "ignore",
@@ -102,32 +103,36 @@ def _request_decision_editor(result) -> None:
     rows = []
     for req in requests:
         key = (req.nurse_name, req.day, getattr(req, "kind", "prefer"), req.requested_shift)
-        if getattr(req, "decision", "force") == "ignore":
-            status = "미반영 선택"
-        elif key in honored_keys:
-            status = "반영됨"
-        elif key in dropped_keys:
-            status = "미반영됨"
-        else:
-            status = "-"
+        is_ignored = getattr(req, "decision", "force") == "ignore"
         rows.append(
             {
-                "선택": False,
                 "이름": req.nurse_name,
                 "날짜": req.day.isoformat(),
                 "유형&신청": _request_label(req),
                 "반영 여부": DECISION_TO_LABEL.get(getattr(req, "decision", "force"), "강제반영"),
-                "결과": status,
+                "_미반영": is_ignored,
             }
         )
 
     st.subheader("듀티 신청 반영 조정")
+    display_df = pd.DataFrame(rows)
+    style_flags = display_df.pop("_미반영")
     edited = st.data_editor(
-        pd.DataFrame(rows),
+        display_df.style.apply(
+            lambda _: pd.DataFrame(
+                [
+                    [IGNORED_REQUEST_STYLE if ignored else "" for _ in display_df.columns]
+                    for ignored in style_flags
+                ],
+                index=display_df.index,
+                columns=display_df.columns,
+            ),
+            axis=None,
+        ),
         key="result_request_decision_editor_v1",
         use_container_width=True,
         hide_index=True,
-        disabled=["선택", "이름", "날짜", "유형&신청", "결과"],
+        disabled=["이름", "날짜", "유형&신청"],
         column_config={
             "반영 여부": st.column_config.SelectboxColumn(
                 options=list(DECISION_LABELS.keys()),
@@ -173,9 +178,13 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
         use_container_width=True,
     )
 
+    ignored_requests = [
+        req for req in st.session_state.get("duty_requests", []) if getattr(req, "decision", "force") == "ignore"
+    ]
+    unreflected_count = len(result.dropped_duty_requests) + len(ignored_requests)
     dropped_off_requests = [
         req
-        for req in result.dropped_duty_requests
+        for req in [*result.dropped_duty_requests, *ignored_requests]
         if getattr(req, "kind", "prefer") == "prefer" and req.requested_shift in (ShiftType.O, ShiftType.AL)
     ]
 
@@ -184,7 +193,7 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
     col2.metric("목적값", f"{result.objective_value:.0f}" if result.objective_value is not None else "-")
     col3.metric("전체 신청", len(st.session_state.get("duty_requests", [])))
     col4.metric("반영 신청", len(result.honored_duty_requests))
-    col5.metric("잘린 신청", len(result.dropped_duty_requests), f"오프 {len(dropped_off_requests)}")
+    col5.metric("미반영 신청", unreflected_count, f"오프 {len(dropped_off_requests)}")
 
     if report is not None:
         if report.ok:

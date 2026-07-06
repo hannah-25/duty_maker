@@ -65,7 +65,7 @@ def _override_frame(rows: list[dict] | None, year: int, month: int) -> pd.DataFr
         return pd.DataFrame(rows)
     return pd.DataFrame(
         [],
-        columns=["날짜", "D하한", "D목표", "E하한", "E목표", "N하한", "N목표"],
+        columns=["날짜", "D", "E", "N"],
     )
 
 
@@ -80,12 +80,9 @@ def _date_overrides_editor(year: int, month: int) -> dict[date, DayRequirement]:
         use_container_width=True,
         column_config={
             "날짜": st.column_config.SelectboxColumn(options=date_options, required=True),
-            "D하한": st.column_config.NumberColumn(min_value=0, step=1),
-            "D목표": st.column_config.NumberColumn(min_value=0, step=1),
-            "E하한": st.column_config.NumberColumn(min_value=0, step=1),
-            "E목표": st.column_config.NumberColumn(min_value=0, step=1),
-            "N하한": st.column_config.NumberColumn(min_value=0, step=1),
-            "N목표": st.column_config.NumberColumn(min_value=0, step=1),
+            "D": st.column_config.NumberColumn(min_value=0, step=1),
+            "E": st.column_config.NumberColumn(min_value=0, step=1),
+            "N": st.column_config.NumberColumn(min_value=0, step=1),
         },
     )
 
@@ -97,26 +94,23 @@ def _date_overrides_editor(year: int, month: int) -> dict[date, DayRequirement]:
             continue
         try:
             day = date.fromisoformat(day_raw)
-            d_min, d_target = int(row["D하한"]), int(row["D목표"])
-            e_min, e_target = int(row["E하한"]), int(row["E목표"])
-            n_min, n_target = int(row["N하한"]), int(row["N목표"])
+            d_count = int(row["D"])
+            e_count = int(row["E"])
+            n_count = int(row["N"])
         except Exception:
             continue
         overrides[day] = DayRequirement(
             day=day,
-            D=ShiftRequirement(d_min, d_target, d_target),
-            E=ShiftRequirement(e_min, e_target, e_target),
-            N=ShiftRequirement(n_min, n_target, n_target),
+            D=ShiftRequirement(d_count, d_count, d_count),
+            E=ShiftRequirement(e_count, e_count, e_count),
+            N=ShiftRequirement(n_count, n_count, n_count),
         )
         rows_for_state.append(
             {
                 "날짜": day.isoformat(),
-                "D하한": d_min,
-                "D목표": d_target,
-                "E하한": e_min,
-                "E목표": e_target,
-                "N하한": n_min,
-                "N목표": n_target,
+                "D": d_count,
+                "E": e_count,
+                "N": n_count,
             }
         )
     st.session_state.date_override_rows = rows_for_state
