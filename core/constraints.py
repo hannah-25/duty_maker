@@ -19,7 +19,7 @@ MODEL_SHIFTS = (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S, ShiftType.O,
 
 # 소프트 벌점 가중치 (상대적 우선순위가 중요)
 WEIGHT_TIER3_EXCEPTION = 1000
-WEIGHT_DUTY_REQUEST = 750
+WEIGHT_DUTY_REQUEST = 5000
 WEIGHT_OFF_SHORTFALL = 500  # O가 목표 미달 (실행불가 회피용 최후수단)
 WEIGHT_TARGET_STAFFING = 30  # 목표인원(D4/E3) 미달, 1명당
 MONDAY_TARGET_MULTIPLIER = 3  # 월요일 목표 미달 가중 (최우선)

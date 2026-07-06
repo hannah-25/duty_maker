@@ -102,4 +102,9 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
         )
 
     st.session_state.duty_requests = requests
+    if requests:
+        st.caption(f"현재 신청 {len(requests)}건")
+        st.dataframe(_request_frame(requests), use_container_width=True, hide_index=True)
+    else:
+        st.caption("현재 신청 0건")
     return requests
