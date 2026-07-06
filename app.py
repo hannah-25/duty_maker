@@ -6,6 +6,7 @@ from core.holidays_kr import get_month_holidays
 from core.models import build_month_requirements, month_dates
 from core.solver import generate_schedule
 from core.validator import validate_schedule
+from ui.duty_request_editor import render_duty_request_editor
 from ui.nurse_editor import render_nurse_editor
 from ui.requirement_editor import render_requirement_editor
 from ui.schedule_view import render_schedule_view
@@ -33,13 +34,16 @@ with st.sidebar:
         reset_defaults()
         st.rerun()
 
-tabs = st.tabs(["명단", "인원 기준", "결과"])
+tabs = st.tabs(["명단", "인원 기준", "듀티 신청", "결과"])
 
 with tabs[0]:
     nurses = render_nurse_editor()
 
 with tabs[1]:
     weekday_template, weekend_template = render_requirement_editor()
+
+with tabs[2]:
+    duty_requests = render_duty_request_editor(int(year), int(month))
 
 weekend_count = sum(1 for day in month_dates(int(year), int(month)) if day.weekday() >= 5)
 off_target_value = weekend_count + int(holiday_count)
@@ -68,6 +72,7 @@ if generate:
             int(month),
             requirements,
             off_target,
+            duty_requests=st.session_state.duty_requests,
             time_limit_seconds=float(time_limit),
         )
         st.session_state.schedule_result = result
@@ -83,5 +88,5 @@ if generate:
         else:
             st.session_state.validation_report = None
 
-with tabs[2]:
+with tabs[3]:
     render_schedule_view(int(year), int(month), holidays)

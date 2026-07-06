@@ -28,6 +28,8 @@ def init_state() -> None:
         st.session_state.schedule_result = None
     if "validation_report" not in st.session_state:
         st.session_state.validation_report = None
+    if "duty_requests" not in st.session_state:
+        st.session_state.duty_requests = []
 
 
 def reset_defaults() -> None:
@@ -37,6 +39,7 @@ def reset_defaults() -> None:
     st.session_state.weekend_template = weekend
     st.session_state.schedule_result = None
     st.session_state.validation_report = None
+    st.session_state.duty_requests = []
 
 
 def clone_nurse(nurse: Nurse, **changes) -> Nurse:
