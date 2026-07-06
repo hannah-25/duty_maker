@@ -9,16 +9,71 @@ from core.models import ShiftType, month_dates
 
 
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
+SHIFT_STYLES = {
+    ShiftType.D.value: "background-color: #DFF3E4; color: #14532D; font-weight: 700;",
+    ShiftType.E.value: "background-color: #E1ECFF; color: #1E3A8A; font-weight: 700;",
+    ShiftType.N.value: "background-color: #F5E6FF; color: #6B21A8; font-weight: 700;",
+    ShiftType.AL.value: "background-color: #F1F5F9; color: #475569; font-weight: 700;",
+}
+OFF_REQUEST_STYLE = (
+    "background-color: #FEF3C7; color: #92400E; font-weight: 800; "
+    "box-shadow: inset 0 0 0 2px #F59E0B;"
+)
+
+
+def _day_columns(year: int, month: int) -> tuple[list[date], list[str], dict[date, str]]:
+    days = month_dates(year, month)
+    columns = [f"{d.month}/{d.day}({WEEKDAY_KR[d.weekday()]})" for d in days]
+    return days, columns, dict(zip(days, columns))
 
 
 def schedule_dataframe(nurses, year: int, month: int, assignments) -> pd.DataFrame:
-    days = month_dates(year, month)
-    columns = [f"{d.month}/{d.day}({WEEKDAY_KR[d.weekday()]})" for d in days]
+    days, columns, _ = _day_columns(year, month)
     return pd.DataFrame(
         [[assignments[(nurse.name, day)].value for day in days] for nurse in nurses],
         index=[nurse.name for nurse in nurses],
         columns=columns,
     )
+
+
+def _honored_off_request_cells(result, day_to_column: dict[date, str]) -> set[tuple[str, str]]:
+    cells: set[tuple[str, str]] = set()
+    for req in result.honored_duty_requests:
+        if getattr(req, "kind", "prefer") != "prefer":
+            continue
+        if req.requested_shift not in (ShiftType.O, ShiftType.AL):
+            continue
+        column = day_to_column.get(req.day)
+        if column is not None:
+            cells.add((req.nurse_name, column))
+    return cells
+
+
+def _style_schedule(df: pd.DataFrame, day_columns: list[str], off_request_cells: set[tuple[str, str]]):
+    def style_cell(value, row_name: str, column_name: str) -> str:
+        if column_name not in day_columns:
+            return ""
+        if (row_name, column_name) in off_request_cells:
+            return OFF_REQUEST_STYLE
+        return SHIFT_STYLES.get(str(value), "")
+
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    for row_name in df.index:
+        for column_name in df.columns:
+            styles.loc[row_name, column_name] = style_cell(df.loc[row_name, column_name], row_name, column_name)
+    return df.style.apply(lambda _: styles, axis=None)
+
+
+def _request_rows(requests) -> list[dict[str, str]]:
+    return [
+        {
+            "이름": req.nurse_name,
+            "날짜": req.day.isoformat(),
+            "유형": "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망",
+            "신청": req.requested_shift.value,
+        }
+        for req in requests
+    ]
 
 
 def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
@@ -34,6 +89,7 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
         return
 
     nurses = st.session_state.nurses
+    days, day_columns, day_to_column = _day_columns(year, month)
     df = schedule_dataframe(nurses, year, month, result.assignments)
     if report is not None and "개인별" in report.stats:
         per_nurse = report.stats["개인별"]
@@ -41,7 +97,11 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
             df[label] = [per_nurse[nurse.name][label] for nurse in nurses]
 
     st.subheader("생성 결과")
-    st.dataframe(df, use_container_width=True)
+    off_request_cells = _honored_off_request_cells(result, day_to_column)
+    st.dataframe(
+        _style_schedule(df, day_columns, off_request_cells),
+        use_container_width=True,
+    )
 
     dropped_off_requests = [
         req
@@ -68,28 +128,8 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
 
     if result.honored_duty_requests:
         with st.expander("반영된 듀티 신청"):
-            st.write(
-                [
-                    {
-                        "이름": req.nurse_name,
-                        "날짜": req.day.isoformat(),
-                        "유형": "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망",
-                        "신청": req.requested_shift.value,
-                    }
-                    for req in result.honored_duty_requests
-                ]
-            )
+            st.write(_request_rows(result.honored_duty_requests))
 
     if result.dropped_duty_requests:
         with st.expander("반영하지 못한 듀티 신청"):
-            st.write(
-                [
-                    {
-                        "이름": req.nurse_name,
-                        "날짜": req.day.isoformat(),
-                        "유형": "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망",
-                        "신청": req.requested_shift.value,
-                    }
-                    for req in result.dropped_duty_requests
-                ]
-            )
+            st.write(_request_rows(result.dropped_duty_requests))
