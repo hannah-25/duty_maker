@@ -141,6 +141,7 @@ class ScheduleModel:
         self._rule_s_eligibility()
         self._rule_s_daily_cap()
         self._rule_weekday_only()
+        self._rule_al_target()
         self._rule_off_cap()
 
     def _rule_n_then_2off(self):
@@ -358,6 +359,14 @@ class ScheduleModel:
                     continue
                 self._enforce(self.model.Add(self.rest_val(nurse.name, day) == 1), lit)
 
+    def _rule_al_target(self):
+        lit = self._assumption("al_target")
+        for nurse in self.nurses:
+            if nurse.al_target is None:
+                continue
+            al_count = sum(self.val(nurse.name, d, ShiftType.AL) for d in self.current_days)
+            self._enforce(self.model.Add(al_count == nurse.al_target), lit)
+
     def _rule_off_cap(self):
         """개인별 O 개수는 목표 오프일수를 초과 불가 — 초과 휴식은 연차(AL)로만."""
         lit = self._assumption("off_cap")
@@ -518,12 +527,20 @@ class ScheduleModel:
 
     def add_duty_requests(self, duty_requests: list[DutyRequest]):
         for req in duty_requests:
+            if getattr(req, "decision", "force") == "ignore":
+                continue
             if (req.nurse_name, req.day) not in self.shift_vars:
                 continue
             if req.requested_shift in (ShiftType.O, ShiftType.AL):
                 satisfied = self.rest_val(req.nurse_name, req.day)
             else:
                 satisfied = self.val(req.nurse_name, req.day, req.requested_shift)
+            if getattr(req, "decision", "force") == "force":
+                if getattr(req, "kind", "prefer") == "avoid":
+                    self.model.Add(satisfied == 0)
+                else:
+                    self.model.Add(satisfied == 1)
+                continue
             violation = self.model.NewBoolVar(
                 f"duty_request_violation_{req.nurse_name}_{req.day.isoformat()}"
             )

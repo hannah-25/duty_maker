@@ -41,6 +41,9 @@ def generate_schedule(
     history = history or {}
     exceptions = exceptions or []
     duty_requests = duty_requests or []
+    active_duty_requests = [
+        req for req in duty_requests if getattr(req, "decision", "force") != "ignore"
+    ]
 
     # 1차: assumption 없이 전부 무조건 하드로 적용 (presolve 완전 동작, 훨씬 빠르고 좋은 해).
     sm = ScheduleModel(
@@ -48,8 +51,8 @@ def generate_schedule(
         use_assumptions=False, n_monthly_range=n_monthly_range,
     )
     sm.add_tier1_hard_constraints()
-    sm.add_tier2_soft_constraints(duty_requests)
-    sm.add_duty_requests(duty_requests)
+    sm.add_tier2_soft_constraints(active_duty_requests)
+    sm.add_duty_requests(active_duty_requests)
     sm.add_tier3_exceptions(exceptions)
 
     sm.model.Minimize(sum(sm.objective_terms()))
@@ -82,7 +85,7 @@ def generate_schedule(
     assignments = _extract_assignments(solver, sm, nurses, current_days)
     soft_violations = _summarize_soft_violations(solver, sm)
     honored_duty_requests, dropped_duty_requests = _split_duty_requests(
-        assignments, duty_requests
+        assignments, active_duty_requests
     )
 
     return ScheduleResult(

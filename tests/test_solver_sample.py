@@ -279,7 +279,7 @@ def test_senior_same_shift_cap(solved):
         assert senior_n == 1, f"{day} N: senior staff {senior_n} != 1"
 
 
-def test_conflicting_duty_requests_report_dropped_request():
+def test_ignored_duty_request_is_not_sent_to_solver():
     nurses = [Nurse(name=f"n{i}", can_charge=True) for i in range(6)]
     template = (
         ShiftRequirement(minimum=2, maximum=2),
@@ -291,7 +291,7 @@ def test_conflicting_duty_requests_report_dropped_request():
     day = date(YEAR, MONTH, 1)
     duty_requests = [
         DutyRequest("n0", day, ShiftType.D),
-        DutyRequest("n0", day, ShiftType.O),
+        DutyRequest("n0", day, ShiftType.O, decision="ignore"),
     ]
 
     result = generate_schedule(
@@ -307,7 +307,8 @@ def test_conflicting_duty_requests_report_dropped_request():
 
     assert result.feasible
     assert len(result.honored_duty_requests) == 1
-    assert len(result.dropped_duty_requests) == 1
+    assert len(result.dropped_duty_requests) == 0
+    assert result.honored_duty_requests[0].requested_shift == ShiftType.D
 
 
 def test_avoid_duty_request_is_honored_when_shift_is_not_assigned():

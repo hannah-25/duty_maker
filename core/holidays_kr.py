@@ -9,6 +9,20 @@ import holidays as holidays_lib
 # 제헌절(7/17)은 2008년부터 법정공휴일은 아니지만 이 병동은 휴일로 카운트한다
 # (오프 목표일수 계산에 포함 — 사용자 확정 사항).
 _WARD_EXTRA_MONTH_DAY = {(7, 17)}
+_WARD_EXTRA_NAMES = {(7, 17): "제헌절"}
+
+
+def get_month_holiday_items(year: int, month: int) -> list[tuple[date, str]]:
+    kr_holidays = holidays_lib.KR(years=year, categories=("public",))
+    items: dict[date, str] = {
+        d: str(name)
+        for d, name in kr_holidays.items()
+        if d.year == year and d.month == month
+    }
+    for m, dd in _WARD_EXTRA_MONTH_DAY:
+        if m == month:
+            items[date(year, m, dd)] = _WARD_EXTRA_NAMES.get((m, dd), "병동 공휴일")
+    return sorted(items.items())
 
 
 def get_month_holidays(

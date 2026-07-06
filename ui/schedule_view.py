@@ -9,8 +9,13 @@ from core.models import ShiftType, month_dates
 
 
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
-HOLIDAY_STYLE = "background-color: rgb(255,132,58);"
-OFF_REQUEST_STYLE = "color: #1D4ED8; font-weight: 800;"
+HOLIDAY_STYLE = "background-color: rgba(255,132,58,0.8);"
+REQUEST_HONORED_STYLE = "color: #1D4ED8; font-weight: 800;"
+DECISION_LABELS = {
+    "강제반영": "force",
+    "미반영": "ignore",
+}
+DECISION_TO_LABEL = {decision: label for label, decision in DECISION_LABELS.items()}
 
 
 def _day_columns(year: int, month: int) -> tuple[list[date], list[str], dict[date, str]]:
@@ -28,12 +33,18 @@ def schedule_dataframe(nurses, year: int, month: int, assignments) -> pd.DataFra
     )
 
 
-def _honored_off_request_cells(result, day_to_column: dict[date, str]) -> set[tuple[str, str]]:
+def _request_label(req) -> str:
+    kind = "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망"
+    shift = "오프" if req.requested_shift in (ShiftType.O, ShiftType.AL) else req.requested_shift.value
+    return f"{kind} {shift}"
+
+
+def _highlight_request_cells(result, day_to_column: dict[date, str]) -> set[tuple[str, str]]:
     cells: set[tuple[str, str]] = set()
     for req in result.honored_duty_requests:
-        if getattr(req, "kind", "prefer") != "prefer":
-            continue
-        if req.requested_shift not in (ShiftType.O, ShiftType.AL):
+        is_off_prefer = getattr(req, "kind", "prefer") == "prefer" and req.requested_shift in (ShiftType.O, ShiftType.AL)
+        is_avoid = getattr(req, "kind", "prefer") == "avoid"
+        if not (is_off_prefer or is_avoid):
             continue
         column = day_to_column.get(req.day)
         if column is not None:
@@ -45,22 +56,22 @@ def _style_schedule(
     df: pd.DataFrame,
     day_columns: list[str],
     holiday_columns: set[str],
-    off_request_cells: set[tuple[str, str]],
+    request_cells: set[tuple[str, str]],
 ):
-    def style_cell(value, row_name: str, column_name: str) -> str:
+    def style_cell(row_name: str, column_name: str) -> str:
         if column_name not in day_columns:
             return ""
         styles: list[str] = []
         if column_name in holiday_columns:
             styles.append(HOLIDAY_STYLE)
-        if (row_name, column_name) in off_request_cells:
-            styles.append(OFF_REQUEST_STYLE)
+        if (row_name, column_name) in request_cells:
+            styles.append(REQUEST_HONORED_STYLE)
         return " ".join(styles)
 
     styles = pd.DataFrame("", index=df.index, columns=df.columns)
     for row_name in df.index:
         for column_name in df.columns:
-            styles.loc[row_name, column_name] = style_cell(df.loc[row_name, column_name], row_name, column_name)
+            styles.loc[row_name, column_name] = style_cell(row_name, column_name)
     return df.style.apply(lambda _: styles, axis=None)
 
 
@@ -69,11 +80,64 @@ def _request_rows(requests) -> list[dict[str, str]]:
         {
             "이름": req.nurse_name,
             "날짜": req.day.isoformat(),
-            "유형": "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망",
-            "신청": req.requested_shift.value,
+            "유형&신청": _request_label(req),
         }
         for req in requests
     ]
+
+
+def _request_decision_editor(result) -> None:
+    requests = list(st.session_state.get("duty_requests", []))
+    if not requests:
+        return
+
+    honored_keys = {
+        (req.nurse_name, req.day, getattr(req, "kind", "prefer"), req.requested_shift)
+        for req in result.honored_duty_requests
+    }
+    dropped_keys = {
+        (req.nurse_name, req.day, getattr(req, "kind", "prefer"), req.requested_shift)
+        for req in result.dropped_duty_requests
+    }
+    rows = []
+    for req in requests:
+        key = (req.nurse_name, req.day, getattr(req, "kind", "prefer"), req.requested_shift)
+        if getattr(req, "decision", "force") == "ignore":
+            status = "미반영 선택"
+        elif key in honored_keys:
+            status = "반영됨"
+        elif key in dropped_keys:
+            status = "미반영됨"
+        else:
+            status = "-"
+        rows.append(
+            {
+                "선택": False,
+                "이름": req.nurse_name,
+                "날짜": req.day.isoformat(),
+                "유형&신청": _request_label(req),
+                "반영 여부": DECISION_TO_LABEL.get(getattr(req, "decision", "force"), "강제반영"),
+                "결과": status,
+            }
+        )
+
+    st.subheader("듀티 신청 반영 조정")
+    edited = st.data_editor(
+        pd.DataFrame(rows),
+        key="result_request_decision_editor_v1",
+        use_container_width=True,
+        hide_index=True,
+        disabled=["선택", "이름", "날짜", "유형&신청", "결과"],
+        column_config={
+            "반영 여부": st.column_config.SelectboxColumn(
+                options=list(DECISION_LABELS.keys()),
+                required=True,
+            ),
+        },
+    )
+    for req, (_, row) in zip(requests, edited.iterrows()):
+        req.decision = DECISION_LABELS.get(str(row.get("반영 여부", "강제반영")), "force")
+    st.session_state.duty_requests = requests
 
 
 def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
@@ -86,6 +150,7 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
     if not result.feasible:
         st.error("실행 가능한 근무표를 찾지 못했습니다.")
         st.write(result.infeasible_categories)
+        _request_decision_editor(result)
         return
 
     nurses = st.session_state.nurses
@@ -97,14 +162,14 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
             df[label] = [per_nurse[nurse.name][label] for nurse in nurses]
 
     st.subheader("생성 결과")
-    off_request_cells = _honored_off_request_cells(result, day_to_column)
+    request_cells = _highlight_request_cells(result, day_to_column)
     holiday_columns = {
         day_to_column[day]
         for day in days
         if day.weekday() >= 5 or day in holidays
     }
     st.dataframe(
-        _style_schedule(df, day_columns, holiday_columns, off_request_cells),
+        _style_schedule(df, day_columns, holiday_columns, request_cells),
         use_container_width=True,
     )
 
@@ -117,7 +182,7 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("공휴일", len(holidays))
     col2.metric("목적값", f"{result.objective_value:.0f}" if result.objective_value is not None else "-")
-    col3.metric("전체 신청", len(result.honored_duty_requests) + len(result.dropped_duty_requests))
+    col3.metric("전체 신청", len(st.session_state.get("duty_requests", [])))
     col4.metric("반영 신청", len(result.honored_duty_requests))
     col5.metric("잘린 신청", len(result.dropped_duty_requests), f"오프 {len(dropped_off_requests)}")
 
@@ -128,8 +193,7 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
             st.error("검증 실패")
             st.write(report.violations)
 
-    with st.expander("소프트 벌점"):
-        st.json(result.soft_violations)
+    _request_decision_editor(result)
 
     if result.honored_duty_requests:
         with st.expander("반영된 듀티 신청"):

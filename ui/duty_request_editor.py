@@ -21,6 +21,11 @@ REQUEST_KIND_LABELS = {
     "제외": "avoid",
 }
 KIND_TO_LABEL = {kind: label for label, kind in REQUEST_KIND_LABELS.items()}
+DECISION_LABELS = {
+    "강제반영": "force",
+    "미반영": "ignore",
+}
+DECISION_TO_LABEL = {decision: label for label, decision in DECISION_LABELS.items()}
 
 
 def _date_label(day: date) -> str:
@@ -30,15 +35,15 @@ def _date_label(day: date) -> str:
 def _request_frame(requests: list[DutyRequest], include_delete: bool = False) -> pd.DataFrame:
     rows = [
         {
-            "삭제": False,
+            "선택": False,
             "이름": req.nurse_name,
             "날짜": _date_label(req.day),
-            "유형": KIND_TO_LABEL.get(getattr(req, "kind", "prefer"), "희망"),
-            "신청": SHIFT_TO_LABEL.get(req.requested_shift, req.requested_shift.value),
+            "유형&신청": f"{KIND_TO_LABEL.get(getattr(req, 'kind', 'prefer'), '희망')} {SHIFT_TO_LABEL.get(req.requested_shift, req.requested_shift.value)}",
+            "반영 여부": DECISION_TO_LABEL.get(getattr(req, "decision", "force"), "강제반영"),
         }
         for req in requests
     ]
-    columns = ["삭제", "이름", "날짜", "유형", "신청"] if include_delete else ["이름", "날짜", "유형", "신청"]
+    columns = ["선택", "이름", "날짜", "유형&신청", "반영 여부"] if include_delete else ["이름", "날짜", "유형&신청", "반영 여부"]
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -94,6 +99,7 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
                     day=valid_dates[selected_date],
                     requested_shift=REQUEST_SHIFT_LABELS[shift_label],
                     kind=REQUEST_KIND_LABELS[kind_label],
+                    decision="force",
                 ),
             ]
         )
@@ -108,16 +114,26 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
             key="duty_request_list_v1",
             use_container_width=True,
             hide_index=True,
-            disabled=["이름", "날짜", "유형", "신청"],
+            disabled=["이름", "날짜", "유형&신청"],
             column_config={
-                "삭제": st.column_config.CheckboxColumn(required=True),
+                "선택": st.column_config.CheckboxColumn(required=True),
+                "반영 여부": st.column_config.SelectboxColumn(
+                    options=list(DECISION_LABELS.keys()),
+                    required=True,
+                ),
             },
         )
+        updated_requests: list[DutyRequest] = []
+        for req, (_, row) in zip(requests, edited.iterrows()):
+            req.decision = DECISION_LABELS.get(str(row.get("반영 여부", "강제반영")), "force")
+            updated_requests.append(req)
+        st.session_state.duty_requests = updated_requests
+        requests = updated_requests
         if st.button("선택 삭제", use_container_width=True):
             keep = [
                 req
                 for req, (_, row) in zip(requests, edited.iterrows())
-                if not bool(row.get("삭제", False))
+                if not bool(row.get("선택", False))
             ]
             st.session_state.duty_requests = keep
             st.rerun()

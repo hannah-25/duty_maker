@@ -184,6 +184,9 @@ def validate_schedule(
 
         # 오프 상한
         o_count = seq.count(ShiftType.O)
+        al_count = seq.count(ShiftType.AL)
+        if n.al_target is not None and al_count != n.al_target:
+            v.append(f"{n.name}: 연차 {al_count}개 != 목표 {n.al_target}개")
         target = off_target.get(n.name, 0)
         if o_count > target:
             v.append(f"{n.name}: O {o_count}개 > 목표 {target}개 (초과분은 연차여야 함)")
@@ -197,7 +200,7 @@ def validate_schedule(
             "근무": sum(1 for s in seq if s in WORKING),
             "N": seq.count(ShiftType.N),
             "O": seq.count(ShiftType.O),
-            "연차": seq.count(ShiftType.AL),
+            "연차": al_count,
             "오프편차": seq.count(ShiftType.O) - target,
         }
     report.stats["개인별"] = per_nurse

@@ -41,6 +41,7 @@ class Nurse:
     n_soft_consecutive_limit: Optional[int] = 3
     excluded_shifts: set[ShiftType] = field(default_factory=set)
     weekday_only: bool = False
+    al_target: Optional[int] = None
 
     def __post_init__(self):
         if self.level is None:
@@ -129,12 +130,15 @@ class DutyRequest:
     day: date
     requested_shift: ShiftType
     kind: str = "prefer"  # prefer: 해당 듀티 희망, avoid: 해당 듀티 제외
+    decision: str = "force"  # force: 강제 반영, ignore: 이번 생성에서 미반영
     priority: int = 1
     memo: str = ""
 
     def __post_init__(self):
         if self.kind not in ("prefer", "avoid"):
             raise ValueError("kind must be 'prefer' or 'avoid'")
+        if self.decision not in ("force", "ignore"):
+            raise ValueError("decision must be 'force' or 'ignore'")
         if self.priority < 1:
             raise ValueError("priority must be at least 1")
 

@@ -30,6 +30,16 @@ def init_state() -> None:
         st.session_state.validation_report = None
     if "duty_requests" not in st.session_state:
         st.session_state.duty_requests = []
+    if "year" not in st.session_state:
+        st.session_state.year = 2026
+    if "month" not in st.session_state:
+        st.session_state.month = 7
+    if "selected_holidays" not in st.session_state:
+        st.session_state.selected_holidays = set()
+    if "date_override_rows" not in st.session_state:
+        st.session_state.date_override_rows = []
+    if "date_overrides" not in st.session_state:
+        st.session_state.date_overrides = {}
 
 
 def reset_defaults() -> None:
@@ -40,6 +50,12 @@ def reset_defaults() -> None:
     st.session_state.schedule_result = None
     st.session_state.validation_report = None
     st.session_state.duty_requests = []
+    st.session_state.year = 2026
+    st.session_state.month = 7
+    st.session_state.selected_holidays = set()
+    st.session_state.holiday_month_key = None
+    st.session_state.date_override_rows = []
+    st.session_state.date_overrides = {}
 
 
 def clone_nurse(nurse: Nurse, **changes) -> Nurse:
