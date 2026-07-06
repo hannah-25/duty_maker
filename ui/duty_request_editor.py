@@ -16,6 +16,11 @@ REQUEST_SHIFT_LABELS = {
     "N": ShiftType.N,
 }
 SHIFT_TO_LABEL = {shift: label for label, shift in REQUEST_SHIFT_LABELS.items()}
+REQUEST_KIND_LABELS = {
+    "희망": "prefer",
+    "제외": "avoid",
+}
+KIND_TO_LABEL = {kind: label for label, kind in REQUEST_KIND_LABELS.items()}
 
 
 def _date_label(day: date) -> str:
@@ -27,13 +32,14 @@ def _request_frame(requests: list[DutyRequest]) -> pd.DataFrame:
         {
             "이름": req.nurse_name,
             "날짜": _date_label(req.day),
+            "유형": KIND_TO_LABEL.get(getattr(req, "kind", "prefer"), "희망"),
             "신청": SHIFT_TO_LABEL.get(req.requested_shift, req.requested_shift.value),
             "우선순위": req.priority,
             "메모": req.memo,
         }
         for req in requests
     ]
-    return pd.DataFrame(rows, columns=["이름", "날짜", "신청", "우선순위", "메모"])
+    return pd.DataFrame(rows, columns=["이름", "날짜", "유형", "신청", "우선순위", "메모"])
 
 
 def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
@@ -56,6 +62,10 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
         column_config={
             "이름": st.column_config.SelectboxColumn(options=nurse_names, required=True),
             "날짜": st.column_config.SelectboxColumn(options=date_options, required=True),
+            "유형": st.column_config.SelectboxColumn(
+                options=list(REQUEST_KIND_LABELS.keys()),
+                required=True,
+            ),
             "신청": st.column_config.SelectboxColumn(
                 options=list(REQUEST_SHIFT_LABELS.keys()),
                 required=True,
@@ -75,6 +85,7 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
     for _, row in edited.iterrows():
         nurse_name = str(row.get("이름", "")).strip()
         day = valid_dates.get(str(row.get("날짜", "")).strip())
+        kind = REQUEST_KIND_LABELS.get(str(row.get("유형", "희망")).strip(), "prefer")
         requested_shift = REQUEST_SHIFT_LABELS.get(str(row.get("신청", "")).strip())
         if not nurse_name or day is None or requested_shift is None:
             continue
@@ -83,6 +94,7 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
                 nurse_name=nurse_name,
                 day=day,
                 requested_shift=requested_shift,
+                kind=kind,
                 priority=int(row.get("우선순위", 1) or 1),
                 memo=str(row.get("메모", "") or ""),
             )

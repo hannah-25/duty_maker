@@ -65,6 +65,7 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
                     {
                         "이름": req.nurse_name,
                         "날짜": req.day.isoformat(),
+                        "유형": "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망",
                         "신청": req.requested_shift.value,
                         "우선순위": req.priority,
                         "메모": req.memo,

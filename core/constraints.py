@@ -512,7 +512,7 @@ class ScheduleModel:
     def _extra_al_allowance(duty_requests: list[DutyRequest]) -> dict[str, int]:
         allowance: dict[str, int] = {}
         for req in duty_requests:
-            if req.requested_shift in (ShiftType.O, ShiftType.AL):
+            if getattr(req, "kind", "prefer") == "prefer" and req.requested_shift in (ShiftType.O, ShiftType.AL):
                 allowance[req.nurse_name] = allowance.get(req.nurse_name, 0) + req.priority
         return allowance
 
@@ -527,7 +527,10 @@ class ScheduleModel:
             violation = self.model.NewBoolVar(
                 f"duty_request_violation_{req.nurse_name}_{req.day.isoformat()}"
             )
-            self.model.Add(violation == 1 - satisfied)
+            if getattr(req, "kind", "prefer") == "avoid":
+                self.model.Add(violation == satisfied)
+            else:
+                self.model.Add(violation == 1 - satisfied)
             self.penalties.append(("duty_request", WEIGHT_DUTY_REQUEST * req.priority, violation))
 
     def add_tier3_exceptions(self, exceptions: list[ExceptionRequest]):

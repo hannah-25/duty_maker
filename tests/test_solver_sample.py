@@ -16,7 +16,7 @@ from core.models import (
     month_dates,
 )
 from core.sample_data import build_real_nurses, ward_templates
-from core.solver import generate_schedule
+from core.solver import _split_duty_requests, generate_schedule
 from core.validator import validate_schedule
 
 YEAR, MONTH = 2026, 7
@@ -308,6 +308,28 @@ def test_conflicting_duty_requests_report_dropped_request():
     assert result.feasible
     assert len(result.honored_duty_requests) == 1
     assert len(result.dropped_duty_requests) == 1
+
+
+def test_avoid_duty_request_is_honored_when_shift_is_not_assigned():
+    day = date(YEAR, MONTH, 1)
+    request = DutyRequest("n0", day, ShiftType.N, kind="avoid")
+    assignments = {("n0", day): ShiftType.D}
+
+    honored, dropped = _split_duty_requests(assignments, [request])
+
+    assert honored == [request]
+    assert dropped == []
+
+
+def test_avoid_duty_request_is_dropped_when_shift_is_assigned():
+    day = date(YEAR, MONTH, 1)
+    request = DutyRequest("n0", day, ShiftType.N, kind="avoid")
+    assignments = {("n0", day): ShiftType.N}
+
+    honored, dropped = _split_duty_requests(assignments, [request])
+
+    assert honored == []
+    assert dropped == [request]
 
 
 # ---------------------------------------------------------------- infeasible --

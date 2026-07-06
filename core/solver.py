@@ -189,9 +189,10 @@ def _split_duty_requests(
     for req in duty_requests:
         assigned = assignments.get((req.nurse_name, req.day))
         if req.requested_shift in (ShiftType.O, ShiftType.AL):
-            matched = assigned in (ShiftType.O, ShiftType.AL)
+            has_shift = assigned in (ShiftType.O, ShiftType.AL)
         else:
-            matched = assigned == req.requested_shift
+            has_shift = assigned == req.requested_shift
+        matched = not has_shift if getattr(req, "kind", "prefer") == "avoid" else has_shift
         (honored if matched else dropped).append(req)
     return honored, dropped
 

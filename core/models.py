@@ -128,10 +128,13 @@ class DutyRequest:
     nurse_name: str
     day: date
     requested_shift: ShiftType
+    kind: str = "prefer"  # prefer: 해당 듀티 희망, avoid: 해당 듀티 제외
     priority: int = 1
     memo: str = ""
 
     def __post_init__(self):
+        if self.kind not in ("prefer", "avoid"):
+            raise ValueError("kind must be 'prefer' or 'avoid'")
         if self.priority < 1:
             raise ValueError("priority must be at least 1")
 
