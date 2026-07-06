@@ -9,16 +9,8 @@ from core.models import ShiftType, month_dates
 
 
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
-SHIFT_STYLES = {
-    ShiftType.D.value: "background-color: #DFF3E4; color: #14532D; font-weight: 700;",
-    ShiftType.E.value: "background-color: #E1ECFF; color: #1E3A8A; font-weight: 700;",
-    ShiftType.N.value: "background-color: #F5E6FF; color: #6B21A8; font-weight: 700;",
-    ShiftType.AL.value: "background-color: #F1F5F9; color: #475569; font-weight: 700;",
-}
-OFF_REQUEST_STYLE = (
-    "background-color: #FEF3C7; color: #92400E; font-weight: 800; "
-    "box-shadow: inset 0 0 0 2px #F59E0B;"
-)
+HOLIDAY_STYLE = "background-color: rgb(255,132,58);"
+OFF_REQUEST_STYLE = "color: #1D4ED8; font-weight: 800;"
 
 
 def _day_columns(year: int, month: int) -> tuple[list[date], list[str], dict[date, str]]:
@@ -49,13 +41,21 @@ def _honored_off_request_cells(result, day_to_column: dict[date, str]) -> set[tu
     return cells
 
 
-def _style_schedule(df: pd.DataFrame, day_columns: list[str], off_request_cells: set[tuple[str, str]]):
+def _style_schedule(
+    df: pd.DataFrame,
+    day_columns: list[str],
+    holiday_columns: set[str],
+    off_request_cells: set[tuple[str, str]],
+):
     def style_cell(value, row_name: str, column_name: str) -> str:
         if column_name not in day_columns:
             return ""
+        styles: list[str] = []
+        if column_name in holiday_columns:
+            styles.append(HOLIDAY_STYLE)
         if (row_name, column_name) in off_request_cells:
-            return OFF_REQUEST_STYLE
-        return SHIFT_STYLES.get(str(value), "")
+            styles.append(OFF_REQUEST_STYLE)
+        return " ".join(styles)
 
     styles = pd.DataFrame("", index=df.index, columns=df.columns)
     for row_name in df.index:
@@ -98,8 +98,13 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
 
     st.subheader("생성 결과")
     off_request_cells = _honored_off_request_cells(result, day_to_column)
+    holiday_columns = {
+        day_to_column[day]
+        for day in days
+        if day.weekday() >= 5 or day in holidays
+    }
     st.dataframe(
-        _style_schedule(df, day_columns, off_request_cells),
+        _style_schedule(df, day_columns, holiday_columns, off_request_cells),
         use_container_width=True,
     )
 
