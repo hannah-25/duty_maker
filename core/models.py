@@ -35,9 +35,10 @@ class Nurse:
     is_junior: bool = False  # 저연차 여부 (S 근무 배정 자격 판단에 사용)
     level: Optional[NurseLevel] = None
     n_excluded: bool = False
-    dedicated_shift: Optional[ShiftType] = None  # ShiftType.D, ShiftType.E, or None
-    max_n_hard: int = 999  # 개인별 N 상한 (하드). n_excluded면 0으로 강제
-    n_soft_consecutive_limit: int = 3  # 2 또는 3 (하드 상한 3 이내)
+    dedicated_shift: Optional[ShiftType] = None  # legacy: use allowed_shifts for new inputs
+    allowed_shifts: Optional[set[ShiftType]] = None
+    max_n_hard: int = 8
+    n_soft_consecutive_limit: Optional[int] = 3
     excluded_shifts: set[ShiftType] = field(default_factory=set)
     weekday_only: bool = False
 
@@ -56,12 +57,24 @@ class Nurse:
         elif self.level in (NurseLevel.JUNIOR, NurseLevel.NEW_JUNIOR):
             self.can_charge = False
             self.is_junior = True
-        if self.n_excluded:
+        if self.dedicated_shift not in (None, ShiftType.D, ShiftType.E, ShiftType.N):
+            raise ValueError("dedicated_shift는 D, E, N, None 중 하나여야 합니다")
+        if self.allowed_shifts is None:
+            self.allowed_shifts = (
+                {self.dedicated_shift}
+                if self.dedicated_shift is not None
+                else {ShiftType.D, ShiftType.E, ShiftType.N}
+            )
+        else:
+            self.allowed_shifts = {ShiftType(s) for s in self.allowed_shifts}
+        invalid = self.allowed_shifts - {ShiftType.D, ShiftType.E, ShiftType.N}
+        if invalid:
+            raise ValueError("allowed_shifts는 D, E, N만 허용합니다")
+        if self.n_excluded or self.max_n_hard <= 0:
             self.max_n_hard = 0
-        if self.dedicated_shift not in (None, ShiftType.D, ShiftType.E):
-            raise ValueError("dedicated_shift는 D, E, None 중 하나여야 합니다")
-        if self.n_soft_consecutive_limit not in (2, 3):
-            raise ValueError("n_soft_consecutive_limit은 2 또는 3이어야 합니다")
+            self.allowed_shifts.discard(ShiftType.N)
+        if self.n_soft_consecutive_limit not in (None, 2, 3):
+            raise ValueError("n_soft_consecutive_limit은 미입력, 2, 3 중 하나여야 합니다")
 
     @property
     def can_act(self) -> bool:

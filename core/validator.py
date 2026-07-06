@@ -162,17 +162,15 @@ def validate_schedule(
             ):
                 v.append(f"{n.name} {days[k + 2]}: E→휴식→{seq[k + 2].value} 배정 금지")
 
-        # N 제외자 / 전담자
+        # 가능한 듀티
         n_count = seq.count(ShiftType.N)
-        if n.n_excluded and n_count > 0:
-            v.append(f"{n.name}: N 제외자인데 N {n_count}개 배정")
-        if n.dedicated_shift is not None:
-            bad = [s for s in seq if s not in (n.dedicated_shift, ShiftType.O, ShiftType.AL)]
-            if bad:
-                v.append(f"{n.name}: {n.dedicated_shift.value} 전담인데 타 근무 {len(bad)}건 배정")
+        allowed = n.allowed_shifts or {ShiftType.D, ShiftType.E, ShiftType.N}
+        bad = [s for s in seq if s in (ShiftType.D, ShiftType.E, ShiftType.N) and s not in allowed]
+        if bad:
+            v.append(f"{n.name}: 가능 듀티 밖 근무 {len(bad)}건 배정")
 
         # 월 N 개수 범위 (나이트 가능 인원만)
-        if not n.n_excluded and n.dedicated_shift is None:
+        if ShiftType.N in allowed and n.max_n_hard > 0:
             upper = min(hi, n.max_n_hard)
             lower = min(lo, upper)
             if not (lower <= n_count <= upper):

@@ -150,7 +150,7 @@ def test_n_monthly_count_in_range_6_to_8(solved):
     nurses, requirements, off_target, result = solved
     days = month_dates(YEAR, MONTH)
     for nurse in nurses:
-        if nurse.n_excluded or nurse.dedicated_shift is not None:
+        if ShiftType.N not in (nurse.allowed_shifts or set()) or nurse.max_n_hard <= 0:
             continue
         n_count = sum(1 for d in days if result.assignments[(nurse.name, d)] == ShiftType.N)
         assert 6 <= n_count <= 8, f"{nurse.name}: 월 N {n_count}개 (6~8 허용)"
@@ -225,13 +225,15 @@ def test_max_3_consecutive_nights(solved):
                 consecutive = 0
 
 
-def test_dedicated_and_charge_rules(solved):
+def test_allowed_shifts_and_charge_rules(solved):
     nurses, requirements, off_target, result = solved
     days = month_dates(YEAR, MONTH)
-    for nurse in (n for n in nurses if n.dedicated_shift is not None):
+    for nurse in nurses:
+        allowed = nurse.allowed_shifts or {ShiftType.D, ShiftType.E, ShiftType.N}
         for day in days:
             shift = result.assignments[(nurse.name, day)]
-            assert shift in (nurse.dedicated_shift, ShiftType.O, ShiftType.AL)
+            if shift in (ShiftType.D, ShiftType.E, ShiftType.N):
+                assert shift in allowed
     for day in days:
         for shift in (ShiftType.D, ShiftType.E, ShiftType.N):
             assigned = [n for n in nurses if result.assignments[(n.name, day)] == shift]
@@ -325,8 +327,11 @@ def test_infeasible_when_min_staffing_impossible():
     assert "staffing_range" in result.infeasible_categories
 
 
-def test_infeasible_when_all_nurses_night_excluded():
-    nurses = [Nurse(name=f"n{i}", can_charge=True, n_excluded=True) for i in range(3)]
+def test_infeasible_when_all_nurses_night_unavailable():
+    nurses = [
+        Nurse(name=f"n{i}", can_charge=True, allowed_shifts={ShiftType.D, ShiftType.E}, max_n_hard=0)
+        for i in range(3)
+    ]
     template = (
         ShiftRequirement(minimum=1, maximum=1),
         ShiftRequirement(minimum=1, maximum=1),
@@ -338,5 +343,5 @@ def test_infeasible_when_all_nurses_night_excluded():
         nurses, YEAR, MONTH, requirements, off_target, n_monthly_range=(0, 31)
     )
     assert not result.feasible
-    assert "n_excluded" in result.infeasible_categories
+    assert "allowed_shifts" in result.infeasible_categories
     assert "staffing_range" in result.infeasible_categories

@@ -104,7 +104,7 @@ def _build_n_cluster_hint(
     잘 피하지 못하는 문제가 있어, 완벽하지 않아도 "몰아주는 방향"의 초기해를 던져줘서
     솔버가 그 방향으로 개선해나가도록 유도한다.
     """
-    eligible = [n for n in nurses if not n.n_excluded and n.dedicated_shift is None]
+    eligible = [n for n in nurses if ShiftType.N in (n.allowed_shifts or set()) and n.max_n_hard > 0]
     n_count = {n.name: 0 for n in eligible}
     block_len = {n.name: 0 for n in eligible}
     rest_remaining = {n.name: 0 for n in eligible}

@@ -10,9 +10,9 @@ from ui.state import shift_requirement_from_row
 def _template_frame(template: tuple[ShiftRequirement, ShiftRequirement, ShiftRequirement]) -> pd.DataFrame:
     return pd.DataFrame(
         [
-            {"근무": "D", "하한": template[0].minimum, "상한": template[0].maximum, "목표": template[0].target},
-            {"근무": "E", "하한": template[1].minimum, "상한": template[1].maximum, "목표": template[1].target},
-            {"근무": "N", "하한": template[2].minimum, "상한": template[2].maximum, "목표": template[2].target},
+            {"근무": "D", "하한": template[0].minimum, "목표": template[0].target},
+            {"근무": "E", "하한": template[1].minimum, "목표": template[1].target},
+            {"근무": "N", "하한": template[2].minimum, "목표": template[2].target},
         ]
     )
 

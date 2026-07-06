@@ -132,8 +132,7 @@ class ScheduleModel:
         self._rule_e_rest_d_forbidden()
         self._rule_max_consecutive_workdays()
         self._rule_max_consecutive_nights()
-        self._rule_n_excluded()
-        self._rule_dedicated_shift()
+        self._rule_allowed_shifts()
         self._rule_n_monthly_range()
         self._rule_staffing_range()
         self._rule_charge_placement()
@@ -242,28 +241,19 @@ class ScheduleModel:
                 n_sum = sum(self.val(nurse.name, d, ShiftType.N) for d in win)
                 self._enforce(self.model.Add(n_sum <= max_n), lit)
 
-    def _rule_n_excluded(self):
-        lit = self._assumption("n_excluded")
+    def _rule_allowed_shifts(self):
+        lit = self._assumption("allowed_shifts")
+        duty_shifts = (ShiftType.D, ShiftType.E, ShiftType.N)
         for nurse in self.nurses:
-            if not nurse.n_excluded:
-                continue
+            allowed = nurse.allowed_shifts or set(duty_shifts)
             for day in self.current_days:
-                self._enforce(self.model.Add(self.val(nurse.name, day, ShiftType.N) == 0), lit)
-
-    def _rule_dedicated_shift(self):
-        lit = self._assumption("dedicated_shift")
-        for nurse in self.nurses:
-            if nurse.dedicated_shift is None:
-                continue
-            allowed = (nurse.dedicated_shift, ShiftType.O, ShiftType.AL)
-            forbidden = [s for s in MODEL_SHIFTS if s not in allowed]
-            for day in self.current_days:
-                for s in forbidden:
-                    self._enforce(self.model.Add(self.val(nurse.name, day, s) == 0), lit)
+                for shift in duty_shifts:
+                    if shift not in allowed:
+                        self._enforce(self.model.Add(self.val(nurse.name, day, shift) == 0), lit)
 
     def _n_eligible(self, nurse: Nurse) -> bool:
         """월 N 개수 범위 규칙의 적용 대상인지 (나이트 가능 인원)."""
-        return not nurse.n_excluded and nurse.dedicated_shift is None
+        return ShiftType.N in (nurse.allowed_shifts or set()) and nurse.max_n_hard > 0
 
     def _rule_n_monthly_range(self):
         """나이트 가능 인원은 월 N 개수가 병동 기본범위(6~8) 안이어야 함.
@@ -448,7 +438,7 @@ class ScheduleModel:
 
     def _soft_night_consecutive_preference(self, window: int = 3):
         for nurse in self.nurses:
-            if nurse.n_soft_consecutive_limit >= 3:
+            if nurse.n_soft_consecutive_limit is None or nurse.n_soft_consecutive_limit >= 3:
                 continue  # 하드 상한(3일)과 동일하므로 별도 벌점 불필요
             limit = nurse.n_soft_consecutive_limit
             for i in range(len(self.all_days) - window + 1):

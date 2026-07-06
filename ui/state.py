@@ -44,10 +44,11 @@ def clone_nurse(nurse: Nurse, **changes) -> Nurse:
 
 
 def shift_requirement_from_row(row) -> ShiftRequirement:
+    target = int(row["목표"])
     return ShiftRequirement(
         minimum=int(row["하한"]),
-        maximum=int(row["상한"]),
-        target=int(row["목표"]),
+        maximum=int(row.get("상한", target)),
+        target=target,
     )
 
 
@@ -55,9 +56,30 @@ def level_label(nurse: Nurse) -> str:
     return LEVEL_LABELS.get(nurse.level, "저연차")
 
 
-def shift_label(shift: ShiftType | None) -> str:
-    return shift.value if shift is not None else "없음"
+def allowed_shifts_label(nurse: Nurse) -> str:
+    allowed = nurse.allowed_shifts or {ShiftType.D, ShiftType.E, ShiftType.N}
+    return ",".join(s.value for s in (ShiftType.D, ShiftType.E, ShiftType.N) if s in allowed)
 
 
-def parse_shift(label: str) -> ShiftType | None:
-    return None if label == "없음" else ShiftType(label)
+def parse_allowed_shifts(value: object) -> set[ShiftType]:
+    if value is None:
+        return {ShiftType.D, ShiftType.E, ShiftType.N}
+    raw = str(value).replace(" ", "").upper()
+    if not raw:
+        return {ShiftType.D, ShiftType.E, ShiftType.N}
+    result: set[ShiftType] = set()
+    tokens = list(raw) if "," not in raw and "/" not in raw else raw.replace("/", ",").split(",")
+    for token in tokens:
+        if not token:
+            continue
+        result.add(ShiftType(token))
+    return result
+
+
+def parse_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    return int(raw)
