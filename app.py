@@ -47,7 +47,8 @@ with tabs[2]:
 
 weekend_count = sum(1 for day in month_dates(int(year), int(month)) if day.weekday() >= 5)
 off_target_value = weekend_count + int(holiday_count)
-off_target = {nurse.name: off_target_value for nurse in st.session_state.nurses}
+nurses_for_generation = st.session_state.get("nurses", [])
+off_target = {nurse.name: off_target_value for nurse in nurses_for_generation}
 requirements = build_month_requirements(
     int(year),
     int(month),
