@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 import streamlit as st
@@ -98,7 +99,11 @@ def parse_allowed_shifts(value: object) -> set[ShiftType]:
 def parse_optional_int(value: object) -> int | None:
     if value is None:
         return None
-    raw = str(value).strip()
-    if not raw:
+    if isinstance(value, float) and math.isnan(value):
         return None
-    return int(raw)
+    if isinstance(value, (int, float)):
+        return int(value)
+    raw = str(value).strip()
+    if not raw or raw.lower() in ("nan", "none"):
+        return None
+    return int(float(raw))

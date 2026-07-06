@@ -26,6 +26,8 @@ REST = (ShiftType.O, ShiftType.AL)
 class ValidationReport:
     violations: list[str] = field(default_factory=list)
     stats: dict[str, object] = field(default_factory=dict)
+    # 사용자 입력 제약별 반영 여부 체크리스트 (UI 표시용)
+    checklist: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -196,11 +198,13 @@ def validate_schedule(
     for n in nurses:
         seq = [shift(n.name, d) for d in days]
         target = off_target.get(n.name, 0)
+        al_count = seq.count(ShiftType.AL)
         per_nurse[n.name] = {
             "근무": sum(1 for s in seq if s in WORKING),
             "N": seq.count(ShiftType.N),
             "O": seq.count(ShiftType.O),
             "연차": al_count,
+            "연차목표": "-" if n.al_target is None else n.al_target,
             "오프편차": seq.count(ShiftType.O) - target,
         }
     report.stats["개인별"] = per_nurse
@@ -212,4 +216,62 @@ def validate_schedule(
         and daily_counts[d][ShiftType.E] + daily_counts[d][ShiftType.S] >= requirements[d].E.target
     )
     report.stats["D/E 목표 달성일"] = f"{target_hit}/{len(days)}"
+
+    # --- 제약 반영 체크리스트 -------------------------------------------------
+    def add_check(item: str, subject: str, expected: str, actual: str, ok: bool):
+        report.checklist.append(
+            {"항목": item, "대상": subject, "기준(입력)": expected, "실제": actual, "반영": ok}
+        )
+
+    staffing_ok = sum(
+        1
+        for d in days
+        if requirements[d].D.minimum <= daily_counts[d][ShiftType.D] + daily_counts[d][ShiftType.S] <= requirements[d].D.maximum
+        and requirements[d].E.minimum <= daily_counts[d][ShiftType.E] + daily_counts[d][ShiftType.S] <= requirements[d].E.maximum
+        and requirements[d].N.minimum <= daily_counts[d][ShiftType.N] <= requirements[d].N.maximum
+    )
+    add_check(
+        "일별 인원 기준", "전체", "D/E/N 하한~상한",
+        f"{staffing_ok}/{len(days)}일 충족", staffing_ok == len(days),
+    )
+
+    allowed_violators: list[str] = []
+    n_range_violators: list[str] = []
+    off_cap_violators: list[str] = []
+    for n in nurses:
+        seq = [shift(n.name, d) for d in days]
+        allowed = n.allowed_shifts or {ShiftType.D, ShiftType.E, ShiftType.N}
+        if any(s in (ShiftType.D, ShiftType.E, ShiftType.N) and s not in allowed for s in seq):
+            allowed_violators.append(n.name)
+        if ShiftType.N in allowed and n.max_n_hard > 0:
+            upper = min(hi, n.max_n_hard)
+            lower = min(lo, upper)
+            n_count = seq.count(ShiftType.N)
+            if not (lower <= n_count <= upper):
+                n_range_violators.append(f"{n.name}(N {n_count})")
+        if seq.count(ShiftType.O) > off_target.get(n.name, 0):
+            off_cap_violators.append(n.name)
+        if n.al_target is not None:
+            al_count = seq.count(ShiftType.AL)
+            add_check(
+                "연차 목표", n.name, f"{n.al_target}개",
+                f"{al_count}개", al_count == n.al_target,
+            )
+        if n.weekday_only:
+            weekend_work = sum(
+                1 for d, s in zip(days, seq) if d.weekday() >= 5 and s not in REST
+            )
+            add_check(
+                "평일만 근무", n.name, "주말 근무 금지",
+                "위반 없음" if weekend_work == 0 else f"주말 근무 {weekend_work}건",
+                weekend_work == 0,
+            )
+
+    def agg(names: list[str]) -> str:
+        return "위반 없음" if not names else "위반: " + ", ".join(names)
+
+    add_check("가능 듀티", "전체", "간호사별 가능 듀티만 배정", agg(allowed_violators), not allowed_violators)
+    add_check("월 나이트 개수", "전체", f"{lo}~{hi}개 & 개인 N 상한 이하", agg(n_range_violators), not n_range_violators)
+    add_check("오프 상한", "전체", "O ≤ 목표 오프일수 (초과 휴식은 연차)", agg(off_cap_violators), not off_cap_violators)
+
     return report

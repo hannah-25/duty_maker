@@ -9,7 +9,7 @@ from core.models import ShiftType, month_dates
 
 
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
-HOLIDAY_STYLE = "background-color: rgba(255,132,58,0.8);"
+HOLIDAY_STYLE = "background-color: #FFE0B2;"
 REQUEST_HONORED_STYLE = "color: #1D4ED8; font-weight: 800;"
 IGNORED_REQUEST_STYLE = "color: #94A3B8; text-decoration: line-through;"
 DECISION_LABELS = {
@@ -145,6 +145,41 @@ def _request_decision_editor(result) -> None:
     st.session_state.duty_requests = requests
 
 
+def _render_constraint_checklist(report, result) -> None:
+    rows: list[dict[str, object]] = list(getattr(report, "checklist", []) or []) if report is not None else []
+
+    forced_requests = [
+        req
+        for req in st.session_state.get("duty_requests", [])
+        if getattr(req, "decision", "force") != "ignore"
+    ]
+    if forced_requests:
+        honored = len(result.honored_duty_requests)
+        dropped = len(result.dropped_duty_requests)
+        rows.append(
+            {
+                "항목": "듀티 신청",
+                "대상": "전체",
+                "기준(입력)": f"강제반영 {len(forced_requests)}건",
+                "실제": f"{honored}건 반영 / {dropped}건 미반영",
+                "반영": dropped == 0,
+            }
+        )
+
+    if not rows:
+        return
+
+    unmet = sum(1 for row in rows if not row["반영"])
+    st.subheader("입력 조건 반영 현황")
+    if unmet:
+        st.warning(f"미반영 항목 {unmet}건 — 아래 표에서 ❌ 항목을 확인하세요.")
+    else:
+        st.caption("입력한 모든 제약 조건이 반영되었습니다.")
+    display = pd.DataFrame(rows)
+    display["반영"] = display["반영"].map(lambda ok: "✅" if ok else "❌")
+    st.dataframe(display, use_container_width=True, hide_index=True)
+
+
 def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
     result = st.session_state.schedule_result
     report = st.session_state.validation_report
@@ -163,8 +198,8 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
     df = schedule_dataframe(nurses, year, month, result.assignments)
     if report is not None and "개인별" in report.stats:
         per_nurse = report.stats["개인별"]
-        for label in ("근무", "N", "O", "연차", "오프편차"):
-            df[label] = [per_nurse[nurse.name][label] for nurse in nurses]
+        for label in ("근무", "N", "O", "연차", "연차목표", "오프편차"):
+            df[label] = [per_nurse[nurse.name].get(label, "-") for nurse in nurses]
 
     st.subheader("생성 결과")
     request_cells = _highlight_request_cells(result, day_to_column)
@@ -201,6 +236,8 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
         else:
             st.error("검증 실패")
             st.write(report.violations)
+
+    _render_constraint_checklist(report, result)
 
     _request_decision_editor(result)
 
