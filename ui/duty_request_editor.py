@@ -27,19 +27,31 @@ def _date_label(day: date) -> str:
     return day.isoformat()
 
 
-def _request_frame(requests: list[DutyRequest]) -> pd.DataFrame:
+def _request_frame(requests: list[DutyRequest], include_delete: bool = False) -> pd.DataFrame:
     rows = [
         {
+            "삭제": False,
             "이름": req.nurse_name,
             "날짜": _date_label(req.day),
             "유형": KIND_TO_LABEL.get(getattr(req, "kind", "prefer"), "희망"),
             "신청": SHIFT_TO_LABEL.get(req.requested_shift, req.requested_shift.value),
-            "우선순위": req.priority,
-            "메모": req.memo,
         }
         for req in requests
     ]
-    return pd.DataFrame(rows, columns=["이름", "날짜", "유형", "신청", "우선순위", "메모"])
+    columns = ["삭제", "이름", "날짜", "유형", "신청"] if include_delete else ["이름", "날짜", "유형", "신청"]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _dedupe_requests(requests: list[DutyRequest]) -> list[DutyRequest]:
+    seen: set[tuple[str, date, str, ShiftType]] = set()
+    result: list[DutyRequest] = []
+    for req in requests:
+        key = (req.nurse_name, req.day, getattr(req, "kind", "prefer"), req.requested_shift)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(req)
+    return result
 
 
 def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
@@ -51,60 +63,62 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
 
     days = month_dates(year, month)
     date_options = [_date_label(day) for day in days]
-    nurses = st.session_state.get("nurses", [])
-    duty_requests = st.session_state.get("duty_requests", [])
-    nurse_names = [nurse.name for nurse in nurses]
-    edited = st.data_editor(
-        _request_frame(duty_requests),
-        key="duty_request_editor_v2",
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "이름": st.column_config.SelectboxColumn(options=nurse_names, required=True),
-            "날짜": st.column_config.SelectboxColumn(options=date_options, required=True),
-            "유형": st.column_config.SelectboxColumn(
-                options=list(REQUEST_KIND_LABELS.keys()),
-                required=True,
-            ),
-            "신청": st.column_config.SelectboxColumn(
-                options=list(REQUEST_SHIFT_LABELS.keys()),
-                required=True,
-            ),
-            "우선순위": st.column_config.NumberColumn(
-                min_value=1,
-                max_value=5,
-                step=1,
-                required=True,
-            ),
-            "메모": st.column_config.TextColumn(required=False),
-        },
-    )
-
-    requests: list[DutyRequest] = []
     valid_dates = {day.isoformat(): day for day in days}
-    for _, row in edited.iterrows():
-        nurse_name = str(row.get("이름", "")).strip()
-        day = valid_dates.get(str(row.get("날짜", "")).strip())
-        kind = REQUEST_KIND_LABELS.get(str(row.get("유형", "희망")).strip(), "prefer")
-        requested_shift = REQUEST_SHIFT_LABELS.get(str(row.get("신청", "")).strip())
-        if not nurse_name or day is None or requested_shift is None:
-            continue
-        requests.append(
-            DutyRequest(
-                nurse_name=nurse_name,
-                day=day,
-                requested_shift=requested_shift,
-                kind=kind,
-                priority=int(row.get("우선순위", 1) or 1),
-                memo=str(row.get("메모", "") or ""),
-            )
-        )
+    nurses = st.session_state.get("nurses", [])
+    nurse_names = [nurse.name for nurse in nurses]
 
-    st.session_state.duty_requests = requests
+    if not nurse_names:
+        st.info("간호사 명단을 먼저 입력하세요.")
+        return []
+
+    col1, col2, col3, col4, col5 = st.columns([1.2, 1.2, 0.8, 0.8, 0.8])
+    with col1:
+        nurse_name = st.selectbox("이름", nurse_names, key="duty_request_name")
+    with col2:
+        selected_date = st.selectbox("날짜", date_options, key="duty_request_date")
+    with col3:
+        kind_label = st.selectbox("유형", list(REQUEST_KIND_LABELS.keys()), key="duty_request_kind")
+    with col4:
+        shift_label = st.selectbox("신청", list(REQUEST_SHIFT_LABELS.keys()), key="duty_request_shift")
+    with col5:
+        st.write("")
+        st.write("")
+        add_clicked = st.button("추가", type="primary", use_container_width=True)
+
+    if add_clicked:
+        st.session_state.duty_requests = _dedupe_requests(
+            [
+                *st.session_state.get("duty_requests", []),
+                DutyRequest(
+                    nurse_name=nurse_name,
+                    day=valid_dates[selected_date],
+                    requested_shift=REQUEST_SHIFT_LABELS[shift_label],
+                    kind=REQUEST_KIND_LABELS[kind_label],
+                ),
+            ]
+        )
+        st.rerun()
+
+    requests: list[DutyRequest] = st.session_state.get("duty_requests", [])
+    st.caption(f"현재 신청 {len(requests)}건")
+
     if requests:
-        st.caption(f"현재 신청 {len(requests)}건")
-        st.dataframe(_request_frame(requests), use_container_width=True, hide_index=True)
-    else:
-        st.caption("현재 신청 0건")
-    return requests
+        edited = st.data_editor(
+            _request_frame(requests, include_delete=True),
+            key="duty_request_list_v1",
+            use_container_width=True,
+            hide_index=True,
+            disabled=["이름", "날짜", "유형", "신청"],
+            column_config={
+                "삭제": st.column_config.CheckboxColumn(required=True),
+            },
+        )
+        if st.button("선택 삭제", use_container_width=True):
+            keep = [
+                req
+                for req, (_, row) in zip(requests, edited.iterrows())
+                if not bool(row.get("삭제", False))
+            ]
+            st.session_state.duty_requests = keep
+            st.rerun()
+    return st.session_state.get("duty_requests", [])

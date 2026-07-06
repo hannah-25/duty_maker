@@ -75,8 +75,6 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
                         "날짜": req.day.isoformat(),
                         "유형": "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망",
                         "신청": req.requested_shift.value,
-                        "우선순위": req.priority,
-                        "메모": req.memo,
                     }
                     for req in result.honored_duty_requests
                 ]
@@ -91,8 +89,6 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
                         "날짜": req.day.isoformat(),
                         "유형": "제외" if getattr(req, "kind", "prefer") == "avoid" else "희망",
                         "신청": req.requested_shift.value,
-                        "우선순위": req.priority,
-                        "메모": req.memo,
                     }
                     for req in result.dropped_duty_requests
                 ]
