@@ -59,7 +59,17 @@ def _dedupe_requests(requests: list[DutyRequest]) -> list[DutyRequest]:
     return result
 
 
-def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
+def render_duty_request_editor(
+    year: int,
+    month: int,
+    restrict_to: str | None = None,
+    locked: bool = False,
+) -> list[DutyRequest]:
+    """듀티 신청 편집기.
+
+    restrict_to: 지정하면 그 사람 본인 신청만 등록/삭제 가능 (일반 사용자 모드).
+    locked: 신청 마감 — 등록/삭제 불가, 목록만 표시.
+    """
     st.subheader("듀티 신청")
     if "nurses" not in st.session_state:
         st.session_state.nurses = build_real_nurses()
@@ -78,45 +88,60 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
         st.info("간호사 명단을 먼저 입력하세요.")
         return []
 
-    col1, col2, col3, col4, col5 = st.columns([1.2, 1.2, 0.8, 0.8, 0.8])
-    with col1:
-        nurse_name = st.selectbox("이름", nurse_names, key="duty_request_name")
-    with col2:
-        selected_date = st.selectbox("날짜", date_options, key="duty_request_date")
-    with col3:
-        kind_label = st.selectbox("유형", list(REQUEST_KIND_LABELS.keys()), key="duty_request_kind")
-    with col4:
-        shift_label = st.selectbox("신청", list(REQUEST_SHIFT_LABELS.keys()), key="duty_request_shift")
-    with col5:
-        st.write("")
-        st.write("")
-        add_clicked = st.button("추가", type="primary", use_container_width=True)
+    if locked:
+        st.warning("신청이 마감되었습니다. 등록·삭제는 관리자에게 문의하세요.")
 
-    if add_clicked:
-        st.session_state.duty_requests = _dedupe_requests(
-            [
-                *st.session_state.get("duty_requests", []),
-                DutyRequest(
-                    nurse_name=nurse_name,
-                    day=valid_dates[selected_date],
-                    requested_shift=REQUEST_SHIFT_LABELS[shift_label],
-                    kind=REQUEST_KIND_LABELS[kind_label],
-                    decision="force",
-                ),
-            ]
-        )
-        st.rerun()
+    if not locked:
+        if restrict_to is None:
+            col1, col2, col3, col4, col5 = st.columns([1.2, 1.2, 0.8, 0.8, 0.8])
+            with col1:
+                nurse_name = st.selectbox("이름", nurse_names, key="duty_request_name")
+        else:
+            nurse_name = restrict_to
+            col2, col3, col4, col5 = st.columns([1.4, 0.9, 0.9, 0.9])
+        with col2:
+            selected_date = st.selectbox("날짜", date_options, key="duty_request_date")
+        with col3:
+            kind_label = st.selectbox("유형", list(REQUEST_KIND_LABELS.keys()), key="duty_request_kind")
+        with col4:
+            shift_label = st.selectbox("신청", list(REQUEST_SHIFT_LABELS.keys()), key="duty_request_shift")
+        with col5:
+            st.write("")
+            st.write("")
+            add_clicked = st.button("추가", type="primary", use_container_width=True)
+
+        if add_clicked:
+            st.session_state.duty_requests = _dedupe_requests(
+                [
+                    *st.session_state.get("duty_requests", []),
+                    DutyRequest(
+                        nurse_name=nurse_name,
+                        day=valid_dates[selected_date],
+                        requested_shift=REQUEST_SHIFT_LABELS[shift_label],
+                        kind=REQUEST_KIND_LABELS[kind_label],
+                        decision="force",
+                    ),
+                ]
+            )
+            st.rerun()
 
     requests: list[DutyRequest] = st.session_state.get("duty_requests", [])
-    st.caption(f"현재 신청 {len(requests)}건")
+    visible = (
+        requests
+        if restrict_to is None
+        else [req for req in requests if req.nurse_name == restrict_to]
+    )
+    st.caption(f"현재 신청 {len(visible)}건")
 
-    if requests:
+    if visible and restrict_to is None:
+        # 관리자: 반영 여부 조정 + 삭제
+        editable = not locked
         edited = st.data_editor(
-            _request_frame(requests, include_delete=True),
+            _request_frame(visible, include_delete=editable),
             key="duty_request_list_v1",
             use_container_width=True,
             hide_index=True,
-            disabled=["이름", "날짜", "유형&신청"],
+            disabled=["이름", "날짜", "유형&신청"] + ([] if editable else ["선택", "반영 여부"]),
             column_config={
                 "선택": st.column_config.CheckboxColumn(required=True),
                 "반영 여부": st.column_config.SelectboxColumn(
@@ -125,18 +150,26 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
                 ),
             },
         )
-        updated_requests: list[DutyRequest] = []
-        for req, (_, row) in zip(requests, edited.iterrows()):
-            req.decision = DECISION_LABELS.get(str(row.get("반영 여부", "강제반영")), "force")
-            updated_requests.append(req)
-        st.session_state.duty_requests = updated_requests
-        requests = updated_requests
-        if st.button("선택 삭제", use_container_width=True):
-            keep = [
-                req
-                for req, (_, row) in zip(requests, edited.iterrows())
-                if not bool(row.get("선택", False))
-            ]
-            st.session_state.duty_requests = keep
-            st.rerun()
+        if editable:
+            for req, (_, row) in zip(visible, edited.iterrows()):
+                req.decision = DECISION_LABELS.get(str(row.get("반영 여부", "강제반영")), "force")
+            st.session_state.duty_requests = requests
+            if st.button("선택 삭제", use_container_width=True):
+                selected = {
+                    id(req)
+                    for req, (_, row) in zip(visible, edited.iterrows())
+                    if bool(row.get("선택", False))
+                }
+                st.session_state.duty_requests = [req for req in requests if id(req) not in selected]
+                st.rerun()
+    elif visible:
+        # 일반 사용자: 본인 신청 목록 + 삭제 (반영 여부는 관리자 영역이라 숨김)
+        for idx, req in enumerate(visible):
+            col_info, col_del = st.columns([4, 1])
+            kind = KIND_TO_LABEL.get(getattr(req, "kind", "prefer"), "희망")
+            shift = SHIFT_TO_LABEL.get(req.requested_shift, req.requested_shift.value)
+            col_info.write(f"{req.day.isoformat()} — {kind} {shift}")
+            if not locked and col_del.button("삭제", key=f"own_request_delete_{idx}"):
+                st.session_state.duty_requests = [r for r in requests if r is not req]
+                st.rerun()
     return st.session_state.get("duty_requests", [])

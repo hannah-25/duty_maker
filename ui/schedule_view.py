@@ -208,7 +208,8 @@ def _render_constraint_checklist(report, result, nurse_names: set[str]) -> None:
     st.dataframe(display, use_container_width=True, hide_index=True)
 
 
-def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
+def render_schedule_view(year: int, month: int, holidays: set[date], read_only: bool = False) -> None:
+    """결과 화면. read_only=True면 일반 사용자용 — 표와 범례만 보여준다."""
     result = st.session_state.schedule_result
     report = st.session_state.validation_report
     if result is None:
@@ -216,6 +217,9 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
         return
 
     if not result.feasible:
+        if read_only:
+            st.info("아직 확정된 근무표가 없습니다.")
+            return
         st.error("실행 가능한 근무표를 찾지 못했습니다.")
         st.write(result.infeasible_categories)
         _request_decision_editor(result)
@@ -224,6 +228,9 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
     nurses = st.session_state.nurses
     days, day_columns, day_to_column = _day_columns(year, month)
     if any((nurse.name, day) not in result.assignments for nurse in nurses for day in days):
+        if read_only:
+            st.info("아직 확정된 근무표가 없습니다.")
+            return
         st.info("명단이나 연월이 생성 시점과 달라졌습니다. 근무표를 다시 생성하세요.")
         _request_decision_editor(result)
         return
@@ -248,7 +255,7 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
             [df, pd.DataFrame(assistant_rows, index=[a.name for a in assistants])]
         )
 
-    st.subheader("생성 결과")
+    st.subheader(f"{year}년 {month}월 근무표" if read_only else "생성 결과")
     request_cells = _highlight_request_cells(result, day_to_column)
     request_cells |= {
         (name, day_to_column[day])
@@ -264,6 +271,10 @@ def render_schedule_view(year: int, month: int, holidays: set[date]) -> None:
         _style_schedule(df, day_columns, holiday_columns, request_cells),
         use_container_width=True,
     )
+
+    if read_only:
+        st.caption("파란 글자는 반영된 듀티 신청, 회색 열은 주말·공휴일입니다.")
+        return
 
     if TEMPLATE_PATH.exists():
         weekend_count = sum(1 for d in days if d.weekday() >= 5)
