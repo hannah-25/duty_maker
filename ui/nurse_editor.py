@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core.models import Nurse
+from core.models import Assistant, Nurse
 from ui.state import (
     LABEL_TO_LEVEL,
     LEVEL_LABELS,
@@ -111,5 +111,33 @@ def render_nurse_editor() -> list[Nurse]:
         )
 
     st.session_state.nurses = updated
+    _render_assistant_editor()
     _render_request_summary()
     return updated
+
+
+def _render_assistant_editor() -> None:
+    st.subheader("보조 인력")
+    st.caption("근무표 생성 대상은 아니며, 결과 표와 HWP 하단 행에 표시됩니다. 듀티 신청도 가능합니다.")
+    rows = [
+        {"이름": assistant.name, "구분": assistant.role}
+        for assistant in st.session_state.get("assistants", [])
+    ]
+    edited = st.data_editor(
+        pd.DataFrame(rows, columns=["이름", "구분"]),
+        key="assistant_editor_v1",
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "구분": st.column_config.TextColumn(help="예: 간호조무사", required=True),
+        },
+    )
+    updated: list[Assistant] = []
+    for _, row in edited.iterrows():
+        name = str(row.get("이름") or "").strip()
+        if not name or name.lower() == "nan":
+            continue
+        role = str(row.get("구분") or "").strip() or "간호조무사"
+        updated.append(Assistant(name=name, role=role))
+    st.session_state.assistants = updated

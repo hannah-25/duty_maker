@@ -87,6 +87,17 @@ class Nurse:
 
 
 @dataclass
+class Assistant:
+    """근무표 생성(솔버) 대상이 아닌 보조 인력 (간호조무사 등).
+
+    결과 표와 HWP 양식 하단 행에 표시되며, 듀티 신청(희망/제외)은 표시 용도로만 쓰인다.
+    """
+
+    name: str
+    role: str = "간호조무사"
+
+
+@dataclass
 class ShiftRequirement:
     """듀티별 하루 인원 요건: 하한~상한(하드 범위) + 목표(소프트).
 

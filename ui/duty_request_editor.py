@@ -70,7 +70,9 @@ def render_duty_request_editor(year: int, month: int) -> list[DutyRequest]:
     date_options = [_date_label(day) for day in days]
     valid_dates = {day.isoformat(): day for day in days}
     nurses = st.session_state.get("nurses", [])
-    nurse_names = [nurse.name for nurse in nurses]
+    assistants = st.session_state.get("assistants", [])
+    # 보조 인력도 간호사와 동일하게 희망/제외 신청 가능 (표시 용도)
+    nurse_names = [nurse.name for nurse in nurses] + [a.name for a in assistants]
 
     if not nurse_names:
         st.info("간호사 명단을 먼저 입력하세요.")

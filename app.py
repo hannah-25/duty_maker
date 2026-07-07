@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.models import build_month_requirements, month_dates
+from core.persistence import save_state
 from core.solver import generate_schedule
 from core.validator import validate_schedule
 from ui.duty_request_editor import render_duty_request_editor
@@ -49,6 +50,13 @@ with generate_col:
 with info_col:
     st.caption(f"목표 오프일수: {off_target_value}일 (주말 {weekend_count}일 + 반영 공휴일 {len(holidays)}일)")
 
+solver_nurse_names = {nurse.name for nurse in nurses_for_generation}
+solver_duty_requests = [
+    req
+    for req in st.session_state.get("duty_requests", [])
+    if req.nurse_name in solver_nurse_names
+]
+
 if generate:
     with st.spinner("근무표 생성 중"):
         result = generate_schedule(
@@ -57,7 +65,7 @@ if generate:
             month,
             requirements,
             off_target,
-            duty_requests=st.session_state.get("duty_requests", []),
+            duty_requests=solver_duty_requests,
             time_limit_seconds=60.0,
         )
         st.session_state.schedule_result = result
@@ -73,5 +81,19 @@ if generate:
         else:
             st.session_state.validation_report = None
 
+# 저장 파일에서 복원된 결과는 검증 리포트가 없으므로 다시 계산한다.
+restored = st.session_state.get("schedule_result")
+if (
+    restored is not None
+    and restored.feasible
+    and st.session_state.get("validation_report") is None
+    and all((n.name, d) in restored.assignments for n in nurses_for_generation for d in month_dates(year, month))
+):
+    st.session_state.validation_report = validate_schedule(
+        nurses_for_generation, year, month, restored.assignments, requirements, off_target
+    )
+
 with tabs[3]:
     render_schedule_view(year, month, holidays)
+
+save_state(st.session_state)
