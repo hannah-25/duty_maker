@@ -29,7 +29,7 @@ def init_state() -> None:
     if "nurses" not in st.session_state:
         st.session_state.nurses = build_real_nurses()
     if "assistants" not in st.session_state:
-        st.session_state.assistants = [Assistant(name="정우정")]
+        st.session_state.assistants = [Assistant(name="신우재")]
     if "weekday_template" not in st.session_state or "weekend_template" not in st.session_state:
         weekday, weekend = ward_templates()
         st.session_state.weekday_template = weekday
@@ -57,7 +57,7 @@ def reset_defaults() -> None:
     st.session_state.pop("_last_saved_state", None)
     weekday, weekend = ward_templates()
     st.session_state.nurses = build_real_nurses()
-    st.session_state.assistants = [Assistant(name="정우정")]
+    st.session_state.assistants = [Assistant(name="신우재")]
     st.session_state.weekday_template = weekday
     st.session_state.weekend_template = weekend
     st.session_state.schedule_result = None
