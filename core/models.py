@@ -74,6 +74,9 @@ class Nurse:
         if self.n_excluded or self.max_n_hard <= 0:
             self.max_n_hard = 0
             self.allowed_shifts.discard(ShiftType.N)
+        if ShiftType.N not in self.allowed_shifts:
+            self.max_n_hard = 0
+            self.n_soft_consecutive_limit = None
         if self.n_soft_consecutive_limit not in (None, 2, 3):
             raise ValueError("n_soft_consecutive_limit은 미입력, 2, 3 중 하나여야 합니다")
 

@@ -13,7 +13,6 @@ from ui.login import render_account_admin, require_login
 from ui.nurse_editor import render_nurse_editor
 from ui.requirement_editor import render_requirement_editor
 from ui.schedule_view import render_schedule_view
-from ui.state import init_state
 from ui.style import apply_custom_style
 
 
@@ -107,7 +106,7 @@ def _render_admin() -> None:
             st.session_state.requests_locked = locked
         with col_reload:
             if is_remote_backend() and st.button("신청 새로 불러오기", use_container_width=True):
-                reload_duty_requests(st.session_state)
+                reload_duty_requests(st.session_state, st.session_state.ward_id)
                 st.rerun()
         render_duty_request_editor(int(st.session_state.year), int(st.session_state.month))
 
@@ -197,8 +196,7 @@ def _render_member(user: dict) -> None:
 
 st.set_page_config(page_title="Duty Maker", layout="wide")
 apply_custom_style()
-init_state()
-user = require_login()
+user, ward_id = require_login()
 
 st.title("Duty Maker")
 
@@ -207,4 +205,4 @@ if user.get("is_admin"):
 else:
     _render_member(user)
 
-save_state(st.session_state, requests_only=not user.get("is_admin"))
+save_state(st.session_state, ward_id, requests_only=not user.get("is_admin"))

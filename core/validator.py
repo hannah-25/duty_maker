@@ -96,7 +96,7 @@ def validate_schedule(
             continue
         for d in days:
             if shift(n.name, d) == ShiftType.S:
-                v.append(f"{n.name} {d}: S 배정 자격 없음 (저연차/완전저연차만 가능)")
+                v.append(f"{n.name} {d}: S 배정 자격 없음 (액팅만/신규만 가능)")
 
     # --- 개인별 규칙 ---------------------------------------------------------
     seniors = [n for n in nurses if n.level == NurseLevel.SENIOR_CHARGE]

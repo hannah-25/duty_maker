@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from core.models import DutyRequest, ShiftType, month_dates
-from core.sample_data import build_real_nurses
 
 
 REQUEST_SHIFT_LABELS = {
@@ -72,7 +71,7 @@ def render_duty_request_editor(
     """
     st.subheader("듀티 신청")
     if "nurses" not in st.session_state:
-        st.session_state.nurses = build_real_nurses()
+        st.session_state.nurses = []
     if "duty_requests" not in st.session_state:
         st.session_state.duty_requests = []
 

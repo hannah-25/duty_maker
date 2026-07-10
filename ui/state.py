@@ -5,31 +5,47 @@ from dataclasses import replace
 
 import streamlit as st
 
-from core.models import Assistant, Nurse, NurseLevel, ShiftRequirement, ShiftType
+from core.models import Nurse, NurseLevel, ShiftRequirement, ShiftType
 from core.persistence import apply_state, clear_state, load_state
-from core.sample_data import build_real_nurses, ward_templates
+from core.sample_data import ward_templates
 
 
 LEVEL_LABELS = {
-    NurseLevel.SENIOR_CHARGE: "고연차",
-    NurseLevel.MIDDLE: "중간연차",
-    NurseLevel.JUNIOR: "저연차",
-    NurseLevel.NEW_JUNIOR: "완전 저연차",
+    NurseLevel.SENIOR_CHARGE: "차지만",
+    NurseLevel.MIDDLE: "차지&액팅",
+    NurseLevel.JUNIOR: "액팅만",
+    NurseLevel.NEW_JUNIOR: "신규",
 }
 LABEL_TO_LEVEL = {label: level for level, label in LEVEL_LABELS.items()}
 
 
-def init_state() -> None:
-    # 새 세션이면 저장 파일에서 먼저 복원 (없으면 아래 기본값으로 채움)
-    if not st.session_state.get("_state_loaded"):
-        st.session_state._state_loaded = True
-        payload = load_state()
+def init_state(ward_id: str) -> None:
+    # 병동이 바뀌면(최초 로그인 포함) 그 병동의 저장 데이터를 다시 불러온다
+    if st.session_state.get("_state_loaded_ward") != ward_id:
+        st.session_state._state_loaded_ward = ward_id
+        for key in (
+            "nurses",
+            "assistants",
+            "weekday_template",
+            "weekend_template",
+            "schedule_result",
+            "validation_report",
+            "duty_requests",
+            "year",
+            "month",
+            "selected_holidays",
+            "date_override_rows",
+            "date_overrides",
+            "_last_saved_state",
+        ):
+            st.session_state.pop(key, None)
+        payload = load_state(ward_id)
         if payload:
             apply_state(st.session_state, payload)
     if "nurses" not in st.session_state:
-        st.session_state.nurses = build_real_nurses()
+        st.session_state.nurses = []
     if "assistants" not in st.session_state:
-        st.session_state.assistants = [Assistant(name="신우재")]
+        st.session_state.assistants = []
     if "weekday_template" not in st.session_state or "weekend_template" not in st.session_state:
         weekday, weekend = ward_templates()
         st.session_state.weekday_template = weekday
@@ -52,12 +68,12 @@ def init_state() -> None:
         st.session_state.date_overrides = {}
 
 
-def reset_defaults() -> None:
-    clear_state()
+def reset_defaults(ward_id: str) -> None:
+    clear_state(ward_id)
     st.session_state.pop("_last_saved_state", None)
     weekday, weekend = ward_templates()
-    st.session_state.nurses = build_real_nurses()
-    st.session_state.assistants = [Assistant(name="신우재")]
+    st.session_state.nurses = []
+    st.session_state.assistants = []
     st.session_state.weekday_template = weekday
     st.session_state.weekend_template = weekend
     st.session_state.schedule_result = None
@@ -85,7 +101,7 @@ def shift_requirement_from_row(row) -> ShiftRequirement:
 
 
 def level_label(nurse: Nurse) -> str:
-    return LEVEL_LABELS.get(nurse.level, "저연차")
+    return LEVEL_LABELS.get(nurse.level, "액팅만")
 
 
 def allowed_shifts_label(nurse: Nurse) -> str:
@@ -94,7 +110,7 @@ def allowed_shifts_label(nurse: Nurse) -> str:
 
 
 def parse_allowed_shifts(value: object) -> set[ShiftType]:
-    if value is None:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
         return {ShiftType.D, ShiftType.E, ShiftType.N}
     raw = str(value).replace(" ", "").upper()
     if not raw:

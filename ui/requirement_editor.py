@@ -130,7 +130,7 @@ def render_requirement_editor():
         if st.button("기본값 복원", use_container_width=True):
             from ui.state import reset_defaults
 
-            reset_defaults()
+            reset_defaults(st.session_state.ward_id)
             st.rerun()
 
     st.session_state.year = year
