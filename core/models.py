@@ -42,8 +42,18 @@ class Nurse:
     excluded_shifts: set[ShiftType] = field(default_factory=set)
     weekday_only: bool = False
     al_target: Optional[int] = None
+    # 외부 병동 헬퍼: 지정된 날/듀티에만 근무하며 오프·연차·연속근무 목표 등
+    # 본원 간호사용 개인 제약은 적용받지 않는다 (안전 제약은 동일 적용).
+    is_helper: bool = False
+    helper_shifts: dict = field(default_factory=dict)  # {date: ShiftType} — 날짜·듀티 지정 모드
+    helper_workdays: Optional[int] = None  # 월 총 근무일수 모드 (지정 모드면 None)
 
     def __post_init__(self):
+        if self.is_helper:
+            self.helper_shifts = {
+                (d if isinstance(d, date) else date.fromisoformat(str(d))): ShiftType(s)
+                for d, s in (self.helper_shifts or {}).items()
+            }
         if self.level is None:
             if self.can_charge:
                 self.level = NurseLevel.MIDDLE
@@ -79,6 +89,11 @@ class Nurse:
             self.n_soft_consecutive_limit = None
         if self.n_soft_consecutive_limit not in (None, 2, 3):
             raise ValueError("n_soft_consecutive_limit은 미입력, 2, 3 중 하나여야 합니다")
+        if self.is_helper:
+            # 헬퍼는 외부 인력 — 차지 불가, 연차 목표 없음 (레벨 분기보다 우선).
+            self.can_charge = False
+            self.is_junior = False
+            self.al_target = None
 
     @property
     def can_act(self) -> bool:
@@ -87,6 +102,16 @@ class Nurse:
     @property
     def is_new_junior(self) -> bool:
         return self.level == NurseLevel.NEW_JUNIOR
+
+    @property
+    def is_night_dedicated(self) -> bool:
+        """나이트 전담: N만 가능한 본원 간호사. 월 나이트를 개인 상한만큼 고정 배정하고,
+        병동 월 나이트 범위 설정·오프 상한에서 제외한다. 헬퍼는 별도 처리."""
+        return (
+            not self.is_helper
+            and self.max_n_hard > 0
+            and self.allowed_shifts == {ShiftType.N}
+        )
 
 
 @dataclass

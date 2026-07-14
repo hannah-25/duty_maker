@@ -5,7 +5,7 @@ from typing import Optional
 
 from ortools.sat.python import cp_model
 
-from core.constraints import N_MONTHLY_RANGE_DEFAULT, ScheduleModel
+from core.constraints import DEFAULT_WARD_SETTINGS, ScheduleModel
 from core.models import (
     DayRequirement,
     DutyRequest,
@@ -28,14 +28,21 @@ def generate_schedule(
     exceptions: Optional[list[ExceptionRequest]] = None,
     duty_requests: Optional[list[DutyRequest]] = None,
     time_limit_seconds: float = 30.0,
-    n_monthly_range: tuple[int, int] = N_MONTHLY_RANGE_DEFAULT,
+    settings: dict | None = None,
 ) -> ScheduleResult:
     """한 달치 근무표를 생성한다.
 
     history: (간호사이름, 날짜) -> ShiftType. 이전 달 마지막 5일 이력 (없으면 O로 간주).
     off_target: 간호사이름 -> 이번달 목표 오프일수 (주말 + 병동 공휴일 수).
-    n_monthly_range: 나이트 가능 인원의 월 N 개수 하드 범위 (병동 기본 6~8).
+    settings: 병동별 제약 설정 (DEFAULT_WARD_SETTINGS 참고).
+
+    월 나이트 개수는 명단의 개인 N상한(max_n_hard)으로만 제한된다(하한 없음).
+    하루 근무 인원은 인원기준 상한(staffing_range)으로 제한된다.
     """
+    merged_settings = {
+        **DEFAULT_WARD_SETTINGS,
+        **{k: v for k, v in (settings or {}).items() if v is not None},
+    }
     current_days = month_dates(year, month)
     lb_days = lookback_dates(year, month, n=5)
     history = history or {}
@@ -48,7 +55,7 @@ def generate_schedule(
     # 1차: assumption 없이 전부 무조건 하드로 적용 (presolve 완전 동작, 훨씬 빠르고 좋은 해).
     sm = ScheduleModel(
         nurses, current_days, lb_days, history, requirements, off_target,
-        use_assumptions=False, n_monthly_range=n_monthly_range,
+        use_assumptions=False, settings=merged_settings,
     )
     sm.add_tier1_hard_constraints()
     sm.add_tier2_soft_constraints(active_duty_requests)
@@ -68,7 +75,7 @@ def generate_schedule(
         # (assumption을 쓰면 presolve가 제한돼 매번 쓰기엔 느리므로 이 경로에서만 사용)
         diag_sm = ScheduleModel(
             nurses, current_days, lb_days, history, requirements, off_target,
-            use_assumptions=True, n_monthly_range=n_monthly_range,
+            use_assumptions=True, settings=merged_settings,
         )
         diag_sm.add_tier1_hard_constraints()
         diag_sm.apply_assumptions()

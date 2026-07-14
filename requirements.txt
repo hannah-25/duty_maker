@@ -1,7 +1,10 @@
 ortools>=9.9
 pandas>=2.2
-streamlit>=1.35
 holidays>=0.50
 lxml>=5.0
 firebase-admin>=6.5
 pytest>=8.0
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pyjwt>=2.9
+httpx>=0.27

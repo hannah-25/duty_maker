@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from core.constraints import N_MONTHLY_RANGE_DEFAULT
 from core.models import (
     DayRequirement,
     Nurse,
@@ -52,8 +51,11 @@ def validate_schedule(
     assignments: dict[tuple[str, date], ShiftType],
     requirements: dict[date, DayRequirement],
     off_target: dict[str, int],
-    n_monthly_range: tuple[int, int] = N_MONTHLY_RANGE_DEFAULT,
+    settings: dict | None = None,
 ) -> ValidationReport:
+    from core.constraints import merge_ward_settings
+
+    cfg = merge_ward_settings(settings)
     report = ValidationReport()
     days = month_dates(year, month)
     day_set = set(days)
@@ -74,14 +76,13 @@ def validate_schedule(
         req = requirements[d]
         cnt = {s: sum(1 for n in nurses if shift(n.name, d) == s) for s in WORKING}
         daily_counts[d] = cnt
+        # 하한~상한 하드 범위 검증. S는 데이 보조라 D에만 포함, E는 순수 이브닝만.
         if not (req.D.minimum <= cnt[ShiftType.D] + cnt[ShiftType.S] <= req.D.maximum):
             v.append(f"{d}: D+S={cnt[ShiftType.D]}+{cnt[ShiftType.S]} (허용 {req.D.minimum}~{req.D.maximum})")
-        if not (req.E.minimum <= cnt[ShiftType.E] + cnt[ShiftType.S] <= req.E.maximum):
-            v.append(f"{d}: E+S={cnt[ShiftType.E]}+{cnt[ShiftType.S]} (허용 {req.E.minimum}~{req.E.maximum})")
+        if not (req.E.minimum <= cnt[ShiftType.E] <= req.E.maximum):
+            v.append(f"{d}: E={cnt[ShiftType.E]} (허용 {req.E.minimum}~{req.E.maximum})")
         if not (req.N.minimum <= cnt[ShiftType.N] <= req.N.maximum):
             v.append(f"{d}: N={cnt[ShiftType.N]} (허용 {req.N.minimum}~{req.N.maximum})")
-        if cnt[ShiftType.S] > 1:
-            v.append(f"{d}: S {cnt[ShiftType.S]}명 (하루 최대 1명)")
 
     # --- 차지 배치 (D/E/N, S 제외) -----------------------------------------
     for d in days:
@@ -101,24 +102,28 @@ def validate_schedule(
     # --- 개인별 규칙 ---------------------------------------------------------
     seniors = [n for n in nurses if n.level == NurseLevel.SENIOR_CHARGE]
     for d in days:
+        # 평일 D에 차지 최소 N명 (병동 설정, 0이면 미적용).
+        wd_charge_min = cfg["weekday_day_charge_min"]
         charge_d = sum(
             1
             for n in nurses
             if n.can_charge and shift(n.name, d) == ShiftType.D
         )
-        if charge_d < 2:
-            v.append(f"{d}: D charge-capable staff {charge_d} < 2")
+        if wd_charge_min > 0 and d.weekday() < 5 and charge_d < wd_charge_min:
+            v.append(f"{d}: D charge-capable staff {charge_d} < {wd_charge_min}")
         if seniors:
-            for s in (ShiftType.D, ShiftType.E):
-                senior_count = sum(1 for n in seniors if shift(n.name, d) == s)
-                if senior_count > 2:
-                    v.append(f"{d} {s.value}: senior staff {senior_count} > 2")
-            senior_n = sum(1 for n in seniors if shift(n.name, d) == ShiftType.N)
-            if senior_n != 1:
-                v.append(f"{d} N: senior staff {senior_n} != 1")
+            # 데이는 최대 2명(하드), 이브닝은 소프트라 검증 제외.
+            senior_d = sum(1 for n in seniors if shift(n.name, d) == ShiftType.D)
+            if senior_d > 2:
+                v.append(f"{d} D: senior staff {senior_d} > 2")
+            if cfg["senior_night_exactly_one"]:
+                senior_n = sum(1 for n in seniors if shift(n.name, d) == ShiftType.N)
+                if senior_n != 1:
+                    v.append(f"{d} N: senior staff {senior_n} != 1")
 
-    lo, hi = n_monthly_range
     for n in nurses:
+        if getattr(n, "is_helper", False):
+            continue  # 헬퍼는 오프·연차·나이트월범위 등 개인 규칙 대상이 아님
         seq = [shift(n.name, d) for d in days]
 
         # 연속근무 5일 이하
@@ -171,12 +176,14 @@ def validate_schedule(
         if bad:
             v.append(f"{n.name}: 가능 듀티 밖 근무 {len(bad)}건 배정")
 
-        # 월 N 개수 범위 (나이트 가능 인원만)
-        if ShiftType.N in allowed and n.max_n_hard > 0:
-            upper = min(hi, n.max_n_hard)
-            lower = min(lo, upper)
-            if not (lower <= n_count <= upper):
-                v.append(f"{n.name}: 월 N {n_count}개 (허용 {lower}~{upper})")
+        # 나이트 전담: N 개수는 개인 상한만큼 고정
+        if getattr(n, "is_night_dedicated", False):
+            if n_count != n.max_n_hard:
+                v.append(f"{n.name}: 나이트 전담 N {n_count}개 (고정 {n.max_n_hard}개여야 함)")
+        # 일반 나이트 가능 인원: 월 N 개수는 개인 N상한 이하 (하한 없음)
+        elif ShiftType.N in allowed and n.max_n_hard > 0:
+            if n_count > n.max_n_hard:
+                v.append(f"{n.name}: 월 N {n_count}개 (개인 상한 {n.max_n_hard} 초과)")
 
         # 평일만 근무자 주말 휴식
         if n.weekday_only:
@@ -190,7 +197,8 @@ def validate_schedule(
         if n.al_target is not None and al_count != n.al_target:
             v.append(f"{n.name}: 연차 {al_count}개 != 목표 {n.al_target}개")
         target = off_target.get(n.name, 0)
-        if o_count > target:
+        # 나이트 전담은 나이트 외 날이 전부 오프라 오프 상한 대상이 아니다.
+        if not getattr(n, "is_night_dedicated", False) and o_count > target:
             v.append(f"{n.name}: O {o_count}개 > 목표 {target}개 (초과분은 연차여야 함)")
 
     # --- 통계 ----------------------------------------------------------------
@@ -213,7 +221,7 @@ def validate_schedule(
         1
         for d in days
         if daily_counts[d][ShiftType.D] + daily_counts[d][ShiftType.S] >= requirements[d].D.target
-        and daily_counts[d][ShiftType.E] + daily_counts[d][ShiftType.S] >= requirements[d].E.target
+        and daily_counts[d][ShiftType.E] >= requirements[d].E.target
     )
     report.stats["D/E 목표 달성일"] = f"{target_hit}/{len(days)}"
 
@@ -227,7 +235,7 @@ def validate_schedule(
         1
         for d in days
         if requirements[d].D.minimum <= daily_counts[d][ShiftType.D] + daily_counts[d][ShiftType.S] <= requirements[d].D.maximum
-        and requirements[d].E.minimum <= daily_counts[d][ShiftType.E] + daily_counts[d][ShiftType.S] <= requirements[d].E.maximum
+        and requirements[d].E.minimum <= daily_counts[d][ShiftType.E] <= requirements[d].E.maximum
         and requirements[d].N.minimum <= daily_counts[d][ShiftType.N] <= requirements[d].N.maximum
     )
     add_check(
@@ -239,17 +247,19 @@ def validate_schedule(
     n_range_violators: list[str] = []
     off_cap_violators: list[str] = []
     for n in nurses:
+        if getattr(n, "is_helper", False):
+            continue
         seq = [shift(n.name, d) for d in days]
         allowed = n.allowed_shifts or {ShiftType.D, ShiftType.E, ShiftType.N}
         if any(s in (ShiftType.D, ShiftType.E, ShiftType.N) and s not in allowed for s in seq):
             allowed_violators.append(n.name)
-        if ShiftType.N in allowed and n.max_n_hard > 0:
-            upper = min(hi, n.max_n_hard)
-            lower = min(lo, upper)
-            n_count = seq.count(ShiftType.N)
-            if not (lower <= n_count <= upper):
-                n_range_violators.append(f"{n.name}(N {n_count})")
-        if seq.count(ShiftType.O) > off_target.get(n.name, 0):
+        if getattr(n, "is_night_dedicated", False):
+            if seq.count(ShiftType.N) != n.max_n_hard:
+                n_range_violators.append(f"{n.name}(N {seq.count(ShiftType.N)})")
+        elif ShiftType.N in allowed and n.max_n_hard > 0:
+            if seq.count(ShiftType.N) > n.max_n_hard:
+                n_range_violators.append(f"{n.name}(N {seq.count(ShiftType.N)})")
+        if not getattr(n, "is_night_dedicated", False) and seq.count(ShiftType.O) > off_target.get(n.name, 0):
             off_cap_violators.append(n.name)
         if n.al_target is not None:
             al_count = seq.count(ShiftType.AL)
@@ -271,7 +281,7 @@ def validate_schedule(
         return "위반 없음" if not names else "위반: " + ", ".join(names)
 
     add_check("가능 듀티", "전체", "간호사별 가능 듀티만 배정", agg(allowed_violators), not allowed_violators)
-    add_check("월 나이트 개수", "전체", f"{lo}~{hi}개 & 개인 N 상한 이하", agg(n_range_violators), not n_range_violators)
+    add_check("월 나이트 개수", "전체", "개인 N 상한 이하 (전담은 상한만큼 고정)", agg(n_range_violators), not n_range_violators)
     add_check("오프 상한", "전체", "O ≤ 목표 오프일수 (초과 휴식은 연차)", agg(off_cap_violators), not off_cap_violators)
 
     return report

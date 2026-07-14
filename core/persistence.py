@@ -1,10 +1,9 @@
 """앱 입력/결과를 저장·복원하는 모듈 (로컬 JSON 또는 Firestore).
 
-Streamlit session_state는 브라우저 세션 메모리라 새로고침하면 사라지므로,
-매 rerun 마지막에 저장하고 새 세션 시작 시 복원한다.
+애플리케이션 상태를 로컬 JSON 또는 Firestore에 저장하고 복원한다.
 
-백엔드 선택: Streamlit secrets에 [firebase] 서비스 계정 키가 있으면 Firestore,
-없으면 로컬 파일(data/wards/{ward_id}/app_state.json 등).
+백엔드 선택: FIREBASE_CREDENTIALS_JSON 환경변수에 서비스 계정 키 JSON 문자열이
+있으면 Firestore, 없으면 로컬 파일(data/wards/{ward_id}/app_state.json 등).
 
 병원+병동 조합(ward)마다 데이터가 완전히 분리된다. ward_id는 병원명+병동명으로
 결정되는 해시이며, wards 레지스트리에 표시용 이름을 저장한다.
@@ -48,6 +47,7 @@ _PLAIN_KEYS = (
     "date_override_rows",
     "requests_locked",
     "result_published",
+    "constraint_settings",
 )
 
 
@@ -60,6 +60,9 @@ def _nurse_to_dict(n: Nurse) -> dict:
         "n_soft_consecutive_limit": n.n_soft_consecutive_limit,
         "al_target": n.al_target,
         "weekday_only": n.weekday_only,
+        "is_helper": n.is_helper,
+        "helper_shifts": {d.isoformat(): s.value for d, s in (n.helper_shifts or {}).items()},
+        "helper_workdays": n.helper_workdays,
     }
 
 
@@ -72,6 +75,9 @@ def _nurse_from_dict(d: dict) -> Nurse:
         n_soft_consecutive_limit=d.get("n_soft_consecutive_limit"),
         al_target=d.get("al_target"),
         weekday_only=bool(d.get("weekday_only", False)),
+        is_helper=bool(d.get("is_helper", False)),
+        helper_shifts=d.get("helper_shifts", {}),
+        helper_workdays=d.get("helper_workdays"),
     )
 
 
@@ -177,13 +183,16 @@ def apply_state(ss, payload: dict) -> None:
 
 # ---------------------------------------------------------------- backend --
 def _firestore():
-    """secrets에 [firebase] 키가 있으면 Firestore 클라이언트, 없으면 None."""
-    try:
-        import streamlit as st
+    """설정이 있으면 Firestore 클라이언트, 없으면 None."""
+    import os
 
-        conf = st.secrets.get("firebase")
-    except Exception:
-        conf = None
+    conf = None
+    raw = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+    if raw:
+        try:
+            conf = json.loads(raw)
+        except Exception:
+            conf = None
     if not conf:
         return None
     import firebase_admin

@@ -111,11 +111,11 @@ def test_validator_passes_all_hard_rules(solved):
     assert report.ok, report.summary()
 
 
-def test_daily_n_exactly_3(solved):
+def test_daily_n_meets_minimum(solved):
     nurses, requirements, off_target, result = solved
     for day in month_dates(YEAR, MONTH):
         n_count = sum(1 for n in nurses if result.assignments[(n.name, day)] == ShiftType.N)
-        assert n_count == 3, f"{day}: N {n_count}명 (정확히 3명이어야 함)"
+        assert n_count >= requirements[day].N.minimum, f"{day}: N {n_count}명 < 하한"
 
 
 def test_daily_staffing_within_range(solved):
@@ -125,9 +125,9 @@ def test_daily_staffing_within_range(solved):
         d = sum(1 for n in nurses if result.assignments[(n.name, day)] == ShiftType.D)
         e = sum(1 for n in nurses if result.assignments[(n.name, day)] == ShiftType.E)
         s = sum(1 for n in nurses if result.assignments[(n.name, day)] == ShiftType.S)
+        # S는 데이 보조라 D에만 포함, E는 순수 이브닝만. 하한~상한 하드.
         assert req.D.minimum <= d + s <= req.D.maximum, f"{day}: D+S={d + s}"
-        assert req.E.minimum <= e + s <= req.E.maximum, f"{day}: E+S={e + s}"
-        assert s <= 1
+        assert req.E.minimum <= e <= req.E.maximum, f"{day}: E={e}"
 
 
 def test_off_count_never_exceeds_target(solved):
@@ -146,14 +146,15 @@ def test_july_off_target_is_9(solved):
     assert all(t == 9 for t in off_target.values())
 
 
-def test_n_monthly_count_in_range_6_to_8(solved):
+def test_n_monthly_count_within_individual_cap(solved):
+    # 월 N 개수는 개인 N상한(max_n_hard) 이하 (하한은 없음).
     nurses, requirements, off_target, result = solved
     days = month_dates(YEAR, MONTH)
     for nurse in nurses:
         if ShiftType.N not in (nurse.allowed_shifts or set()) or nurse.max_n_hard <= 0:
             continue
         n_count = sum(1 for d in days if result.assignments[(nurse.name, d)] == ShiftType.N)
-        assert 6 <= n_count <= 8, f"{nurse.name}: 월 N {n_count}개 (6~8 허용)"
+        assert n_count <= nurse.max_n_hard, f"{nurse.name}: 월 N {n_count}개 > 상한 {nurse.max_n_hard}"
 
 
 def test_weekday_only_nurse_rests_all_weekends(solved):
@@ -250,29 +251,47 @@ def test_s_only_junior_or_new_junior_staff(solved):
                 assert result.assignments[(nurse.name, day)] != ShiftType.S
 
 
-def test_daily_d_has_at_least_two_charge_capable_staff(solved):
+def test_weekday_d_has_at_least_two_charge_capable_staff(solved):
     nurses, requirements, off_target, result = solved
     days = month_dates(YEAR, MONTH)
     for day in days:
+        if day.weekday() >= 5:
+            continue  # 주말은 차지 1명이면 충분 (charge_placement가 보장)
         charge_d = sum(
             1
             for nurse in nurses
             if nurse.can_charge
             and result.assignments[(nurse.name, day)] == ShiftType.D
         )
-        assert charge_d >= 2, f"{day}: D charge-capable staff {charge_d} < 2"
+        assert charge_d >= 2, f"{day}: 평일 D charge-capable staff {charge_d} < 2"
+
+
+def test_weekend_d_has_at_least_one_charge_capable_staff(solved):
+    nurses, requirements, off_target, result = solved
+    days = month_dates(YEAR, MONTH)
+    for day in days:
+        if day.weekday() < 5:
+            continue
+        has_d = any(result.assignments[(n.name, day)] == ShiftType.D for n in nurses)
+        charge_d = sum(
+            1
+            for nurse in nurses
+            if nurse.can_charge and result.assignments[(nurse.name, day)] == ShiftType.D
+        )
+        if has_d:
+            assert charge_d >= 1, f"{day}: 주말 D 차지 0명"
 
 
 def test_senior_same_shift_cap(solved):
+    # 데이 최대 2명, 나이트 정확히 1명 (하드). 이브닝은 소프트라 검증 제외.
     nurses, requirements, off_target, result = solved
     days = month_dates(YEAR, MONTH)
     seniors = [n for n in nurses if n.level == NurseLevel.SENIOR_CHARGE]
     for day in days:
-        for shift in (ShiftType.D, ShiftType.E):
-            senior_count = sum(
-                1 for nurse in seniors if result.assignments[(nurse.name, day)] == shift
-            )
-            assert senior_count <= 2, f"{day} {shift.value}: senior staff {senior_count} > 2"
+        senior_d = sum(
+            1 for nurse in seniors if result.assignments[(nurse.name, day)] == ShiftType.D
+        )
+        assert senior_d <= 2, f"{day} D: senior staff {senior_d} > 2"
         senior_n = sum(
             1 for nurse in seniors if result.assignments[(nurse.name, day)] == ShiftType.N
         )
@@ -301,7 +320,6 @@ def test_ignored_duty_request_is_not_sent_to_solver():
         requirements,
         off_target,
         duty_requests=duty_requests,
-        n_monthly_range=(0, 31),
         time_limit_seconds=10,
     )
 
@@ -343,9 +361,7 @@ def test_infeasible_when_min_staffing_impossible():
     )
     requirements = build_month_requirements(YEAR, MONTH, template, template)
     off_target = {n.name: 0 for n in nurses}
-    result = generate_schedule(
-        nurses, YEAR, MONTH, requirements, off_target, n_monthly_range=(0, 31)
-    )
+    result = generate_schedule(nurses, YEAR, MONTH, requirements, off_target)
     assert not result.feasible
     assert "staffing_range" in result.infeasible_categories
 
@@ -362,9 +378,7 @@ def test_infeasible_when_all_nurses_night_unavailable():
     )
     requirements = build_month_requirements(YEAR, MONTH, template, template)
     off_target = {n.name: 0 for n in nurses}
-    result = generate_schedule(
-        nurses, YEAR, MONTH, requirements, off_target, n_monthly_range=(0, 31)
-    )
+    result = generate_schedule(nurses, YEAR, MONTH, requirements, off_target)
     assert not result.feasible
     assert "allowed_shifts" in result.infeasible_categories
     assert "staffing_range" in result.infeasible_categories
