@@ -102,24 +102,22 @@ def validate_schedule(
     # --- 개인별 규칙 ---------------------------------------------------------
     seniors = [n for n in nurses if n.level == NurseLevel.SENIOR_CHARGE]
     for d in days:
-        # 평일 D에 차지 최소 N명 (병동 설정, 0이면 미적용).
-        wd_charge_min = cfg["weekday_day_charge_min"]
-        charge_d = sum(
-            1
-            for n in nurses
-            if n.can_charge and shift(n.name, d) == ShiftType.D
-        )
-        if wd_charge_min > 0 and d.weekday() < 5 and charge_d < wd_charge_min:
-            v.append(f"{d}: D charge-capable staff {charge_d} < {wd_charge_min}")
+        # 근무별 차지 최소 N명 (평일·주말·D/E/N 각각 병동 설정). 인원이 적은 근무엔
+        # 실제 배정 인원까지만 요구 (빈 근무는 위반 아님).
+        prefix = "weekend" if d.weekday() >= 5 else "weekday"
+        for shift_t in (ShiftType.D, ShiftType.E, ShiftType.N):
+            total_on = sum(1 for n in nurses if shift(n.name, d) == shift_t)
+            charge_min = min(cfg[f"{prefix}_charge_{shift_t.value}"], total_on)
+            if charge_min <= 0:
+                continue
+            charge_c = sum(1 for n in nurses if n.can_charge and shift(n.name, d) == shift_t)
+            if charge_c < charge_min:
+                v.append(f"{d} {shift_t.value}: charge-capable staff {charge_c} < {charge_min}")
         if seniors:
-            # 데이는 최대 2명(하드), 이브닝은 소프트라 검증 제외.
+            # 데이는 최대 2명(하드), 이브닝·나이트는 검증 제외.
             senior_d = sum(1 for n in seniors if shift(n.name, d) == ShiftType.D)
             if senior_d > 2:
                 v.append(f"{d} D: senior staff {senior_d} > 2")
-            if cfg["senior_night_exactly_one"]:
-                senior_n = sum(1 for n in seniors if shift(n.name, d) == ShiftType.N)
-                if senior_n != 1:
-                    v.append(f"{d} N: senior staff {senior_n} != 1")
 
     for n in nurses:
         if getattr(n, "is_helper", False):

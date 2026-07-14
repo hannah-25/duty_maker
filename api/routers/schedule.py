@@ -14,7 +14,7 @@ from api.schemas import (
     ScheduleOut,
     ScheduleRequestOut,
 )
-from api.state_store import load_ward_state, save_ward_state
+from api.state_store import load_ward_state, resolve_ward_settings, save_ward_state
 from core.models import (
     DayRequirement,
     DutyRequest,
@@ -134,7 +134,7 @@ def _build_report(ss: dict):
         result.assignments,
         _requirements(ss, year, month),
         _off_target(ss, year, month),
-        settings=ss.get("constraint_settings"),
+        settings=resolve_ward_settings(ss),
     )
 
 
@@ -289,7 +289,7 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
         off_target,
         duty_requests=duty_requests,
         time_limit_seconds=60.0,
-        settings=ss.get("constraint_settings"),
+        settings=resolve_ward_settings(ss),
     )
     ss["schedule_result"] = result
     ss["result_published"] = False

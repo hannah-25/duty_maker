@@ -4,19 +4,19 @@ from fastapi import APIRouter, Depends
 
 from api.deps import CurrentUser, get_current_user, require_admin
 from api.schemas import WardSettings
-from api.state_store import load_ward_state, save_ward_state
-from core.constraints import merge_ward_settings
+from api.state_store import (
+    default_charge_minimums,
+    load_ward_state,
+    resolve_ward_settings,
+    save_ward_state,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
-def _settings_out(ss: dict) -> WardSettings:
-    return WardSettings(**merge_ward_settings(ss.get("constraint_settings")))
-
-
 @router.get("", response_model=WardSettings)
 def get_settings(user: CurrentUser = Depends(get_current_user)) -> WardSettings:
-    return _settings_out(load_ward_state(user.ward_id))
+    return WardSettings(**resolve_ward_settings(load_ward_state(user.ward_id)))
 
 
 @router.put("", response_model=WardSettings)
@@ -25,6 +25,10 @@ def put_settings(
     user: CurrentUser = Depends(require_admin),
 ) -> WardSettings:
     ss = load_ward_state(user.ward_id)
-    ss["constraint_settings"] = body.model_dump()
+    # 기본값(목표÷2)과 같은 값은 저장하지 않아 목표가 바뀌면 자동으로 따라간다.
+    defaults = default_charge_minimums(ss)
+    submitted = body.model_dump()
+    overrides = {key: value for key, value in submitted.items() if value != defaults.get(key)}
+    ss["constraint_settings"] = overrides
     save_ward_state(user.ward_id, ss)
-    return _settings_out(ss)
+    return WardSettings(**resolve_ward_settings(ss))

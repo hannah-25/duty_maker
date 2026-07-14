@@ -11,42 +11,33 @@ export async function renderRequirements(container) {
 function paint(container) {
   container.innerHTML = `
     <h2 style="font-size:1.15rem">인원·규칙</h2>
-    <p class="caption">근무표 생성에 쓰는 인원 기준과 이 병동의 근무 규칙을 함께 관리합니다.</p>
+    <p class="caption">근무표 생성에 쓰는 연월, 평일/주말 필요 인원·차지, 공휴일, 날짜별 예외를 관리합니다.</p>
 
-    <div class="reqrules-layout">
-      <div class="rr-col">
-        <h3 class="rr-heading">인원 기준</h3>
-        <div class="requirements-grid">
-          <label>
-            연도
-            <input type="number" id="req-year" min="2020" max="2100" value="${current.year}" />
-          </label>
-          <label>
-            월
-            <input type="number" id="req-month" min="1" max="12" value="${current.month}" />
-          </label>
-          <button id="reload-month-btn" style="align-self:end">연월 적용</button>
-        </div>
-
-        <div class="template-grid">
-          ${templateBlock("weekday", "평일", current.weekday_template)}
-          ${templateBlock("weekend", "주말", current.weekend_template)}
-        </div>
-
-        <h3>공휴일</h3>
-        <div id="holiday-rows" class="check-list"></div>
-
-        <h3>날짜별 예외</h3>
-        <p class="caption">특정 날짜의 D/E/N 필요 인원이 기본 템플릿과 다를 때만 추가하세요.</p>
-        <div id="override-rows"></div>
-        <button id="add-override-btn">+ 예외 추가</button>
-      </div>
-
-      <div class="rr-col">
-        <h3 class="rr-heading">병동 규칙</h3>
-        ${settingsBlock()}
-      </div>
+    <div class="requirements-grid">
+      <label>
+        연도
+        <input type="number" id="req-year" min="2020" max="2100" value="${current.year}" />
+      </label>
+      <label>
+        월
+        <input type="number" id="req-month" min="1" max="12" value="${current.month}" />
+      </label>
+      <button id="reload-month-btn" style="align-self:end">연월 적용</button>
     </div>
+
+    <div class="template-grid">
+      ${templateBlock("weekday", "평일 근무", current.weekday_template)}
+      ${templateBlock("weekend", "주말 근무", current.weekend_template)}
+    </div>
+    <p class="caption">'차지'는 그 근무의 차지 가능자 최소 인원입니다. 모든 근무엔 최소 1명이 항상 배치됩니다.</p>
+
+    <h3>공휴일</h3>
+    <div id="holiday-rows" class="check-list"></div>
+
+    <h3>날짜별 예외</h3>
+    <p class="caption">특정 날짜의 D/E/N 필요 인원이 기본 템플릿과 다를 때만 추가하세요.</p>
+    <div id="override-rows"></div>
+    <button id="add-override-btn">+ 예외 추가</button>
 
     <div style="margin-top:1.4rem">
       <button class="primary inline-primary" id="save-requirements-btn">저장</button>
@@ -89,6 +80,17 @@ function templateBlock(key, title, template) {
           ${["D", "E", "N"].map((shift) => requirementRow(key, shift, template[shift])).join("")}
         </tbody>
       </table>
+      <div class="charge-row">
+        <span>차지 최소</span>
+        ${["D", "E", "N"]
+          .map(
+            (shift) => `
+          <label>${shift}
+            <input type="number" min="0" max="5" data-charge="${key}_charge_${shift}" value="${settings[`${key}_charge_${shift}`] ?? 0}" />
+          </label>`
+          )
+          .join("")}
+      </div>
     </section>
   `;
 }
@@ -151,29 +153,6 @@ function paintOverrides(container) {
   });
 }
 
-function settingsBlock() {
-  return `
-    <section class="panel">
-      <h4>나이트 시니어 배치</h4>
-      <label class="inline-check">
-        <input type="checkbox" id="s-senior-night" ${settings.senior_night_exactly_one ? "checked" : ""} />
-        나이트에 책임급을 <strong>정확히 1명</strong> 배치
-      </label>
-      <p class="caption" style="margin:0.5rem 0 0">나이트 전담이 전부 책임급인 병동은 끄세요.</p>
-    </section>
-
-    <section class="panel">
-      <h4>평일 데이 차지 최소 인원</h4>
-      <div class="settings-inline">
-        <label>평일 D 차지 <input type="number" id="s-charge" min="0" max="5" value="${settings.weekday_day_charge_min}" />명 이상</label>
-      </div>
-      <p class="caption" style="margin:0.5rem 0 0">0이면 미적용(주말 D 차지 1명은 항상 보장).</p>
-    </section>
-
-    <p class="caption">월 나이트 개수는 명단의 개인 N상한으로 제한됩니다. 나이트 전담(N만 가능)은 개인 N상한만큼 나이트를 서고 나머지 날은 오프가 됩니다.</p>
-  `;
-}
-
 async function save(container, { silent = false } = {}) {
   const status = container.querySelector("#requirements-status");
   if (status && !silent) status.textContent = "저장 중...";
@@ -207,14 +186,12 @@ function collect(container) {
   current.selected_holidays = [...container.querySelectorAll("#holiday-rows input:checked")].map(
     (input) => input.value
   );
-  // 병동 규칙도 함께 수집.
-  const seniorNight = container.querySelector("#s-senior-night");
-  if (seniorNight) {
-    settings = {
-      senior_night_exactly_one: seniorNight.checked,
-      weekday_day_charge_min: Number(container.querySelector("#s-charge").value),
-    };
+  // 근무별 차지 최소 인원(병동 규칙)도 함께 수집.
+  const next = { ...settings };
+  for (const input of container.querySelectorAll("[data-charge]")) {
+    next[input.dataset.charge] = Number(input.value);
   }
+  settings = next;
 }
 
 function firstDay() {

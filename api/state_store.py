@@ -6,6 +6,29 @@ from core.holidays_kr import get_month_holiday_items
 from core.persistence import apply_state, load_state, save_state
 from core.sample_data import ward_templates
 
+_CHARGE_SHIFTS = ("D", "E", "N")
+
+
+def default_charge_minimums(ss: dict) -> dict[str, int]:
+    """근무별 차지 최소 기본값 = 해당 근무 목표 인원 ÷ 2 (내림). 평일/주말 각각."""
+    out: dict[str, int] = {}
+    for prefix, key in (("weekday", "weekday_template"), ("weekend", "weekend_template")):
+        template = ss.get(key)
+        for i, shift in enumerate(_CHARGE_SHIFTS):
+            target = template[i].target if template else 0
+            out[f"{prefix}_charge_{shift}"] = target // 2
+    return out
+
+
+def resolve_ward_settings(ss: dict) -> dict[str, int]:
+    """병동 제약 설정을 확정한다: 저장된 값이 있으면 그것, 없으면 목표÷2 기본값."""
+    stored = ss.get("constraint_settings") or {}
+    resolved = default_charge_minimums(ss)
+    for key in list(resolved):
+        if stored.get(key) is not None:
+            resolved[key] = int(stored[key])
+    return resolved
+
 
 def normalize_month_state(ss: dict) -> None:
     """대상 연월이 바뀌었으면 공휴일을 전부 선택하고 날짜별 예외를 비운다.

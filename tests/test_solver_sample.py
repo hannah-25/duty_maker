@@ -283,7 +283,7 @@ def test_weekend_d_has_at_least_one_charge_capable_staff(solved):
 
 
 def test_senior_same_shift_cap(solved):
-    # 데이 최대 2명, 나이트 정확히 1명 (하드). 이브닝은 소프트라 검증 제외.
+    # 데이 최대 2명 (하드). 이브닝은 소프트, 나이트는 제약 없음.
     nurses, requirements, off_target, result = solved
     days = month_dates(YEAR, MONTH)
     seniors = [n for n in nurses if n.level == NurseLevel.SENIOR_CHARGE]
@@ -292,10 +292,6 @@ def test_senior_same_shift_cap(solved):
             1 for nurse in seniors if result.assignments[(nurse.name, day)] == ShiftType.D
         )
         assert senior_d <= 2, f"{day} D: senior staff {senior_d} > 2"
-        senior_n = sum(
-            1 for nurse in seniors if result.assignments[(nurse.name, day)] == ShiftType.N
-        )
-        assert senior_n == 1, f"{day} N: senior staff {senior_n} != 1"
 
 
 def test_ignored_duty_request_is_not_sent_to_solver():
