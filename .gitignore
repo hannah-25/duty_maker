@@ -6,3 +6,4 @@ __pycache__/
 .sisyphus/
 ~$*.xlsx
 data/
+*-firebase-adminsdk-*.json

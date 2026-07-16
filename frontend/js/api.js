@@ -51,8 +51,10 @@ async function download(path) {
 export const api = {
   listWards: () => request("/wards"),
   createWard: (body) => request("/wards", { method: "POST", body }),
+  lookup: (body) => request("/auth/lookup", { method: "POST", body }),
   login: (body) => request("/auth/login", { method: "POST", body }),
   register: (body) => request("/auth/register", { method: "POST", body }),
+  changePin: (body) => request("/auth/change-pin", { method: "POST", body }),
   getRoster: () => request("/nurses"),
   putRoster: (body) => request("/nurses", { method: "PUT", body }),
   getRequirements: () => request("/requirements"),
@@ -71,5 +73,6 @@ export const api = {
   downloadXlsx: () => download("/exports/xlsx"),
   getAccounts: () => request("/accounts"),
   updateAccount: (name, body) => request(`/accounts/${encodeURIComponent(name)}`, { method: "PATCH", body }),
+  resetPin: (name) => request(`/accounts/${encodeURIComponent(name)}/reset-pin`, { method: "POST" }),
   deleteAccount: (name) => request(`/accounts/${encodeURIComponent(name)}`, { method: "DELETE" }),
 };

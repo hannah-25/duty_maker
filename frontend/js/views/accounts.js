@@ -10,7 +10,7 @@ export async function renderAccounts(container) {
 function paint(container) {
   container.innerHTML = `
     <h2 style="font-size:1.15rem">계정 관리</h2>
-    <p class="caption">PIN 초기화는 계정을 삭제합니다. 사용자는 다음 로그인 화면에서 PIN을 다시 등록할 수 있습니다.</p>
+    <p class="caption">PIN 초기화 시 해당 계정의 PIN이 <strong>1234</strong>로 바뀝니다. 사용자는 1234로 로그인한 뒤 본인 PIN을 변경해야 합니다.</p>
     ${unregisteredBlock()}
     <div id="accounts-status" class="caption"></div>
     <div id="account-rows"></div>
@@ -53,7 +53,7 @@ function paintRows(container) {
                   </label>
                 </td>
                 <td>
-                  <button data-delete="${escapeAttr(account.name)}" ${account.is_current ? "disabled" : ""}>PIN 초기화</button>
+                  <button data-reset="${escapeAttr(account.name)}" ${account.is_current ? "disabled" : ""}>PIN 초기화</button>
                 </td>
               </tr>
             `
@@ -68,9 +68,11 @@ function paintRows(container) {
       await update(container, () => api.updateAccount(e.target.dataset.admin, { is_admin: e.target.checked }));
     });
   }
-  for (const button of wrap.querySelectorAll("[data-delete]")) {
+  for (const button of wrap.querySelectorAll("[data-reset]")) {
     button.addEventListener("click", async () => {
-      await update(container, () => api.deleteAccount(button.dataset.delete));
+      const name = button.dataset.reset;
+      if (!confirm(`${name} 님의 PIN을 1234로 초기화할까요?`)) return;
+      await update(container, () => api.resetPin(name));
     });
   }
 }

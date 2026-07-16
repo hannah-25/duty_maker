@@ -1,0 +1,74 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: cloud-run-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          region: ${{ vars.CLOUD_RUN_REGION }}
+          service: ${{ vars.CLOUD_RUN_SERVICE }}
+          source: .
+          env_vars: |-
+            PYTHONUNBUFFERED=1
+            STORAGE_BACKEND=firestore
+          secrets: |-
+            SECRET_KEY=duty-maker-secret-key:latest
+            WARD_REGISTRATION_CODE=duty-maker-ward-registration-code:latest
+          flags: >-
+            --allow-unauthenticated
+            --service-account=${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
+            --memory=2Gi
+            --cpu=2
+            --timeout=900
+            --max-instances=10
+
+      - name: Show service URL
+        run: echo "${{ steps.deploy.outputs.url }}"
+
+      - name: Verify deployed service
+        run: >-
+          curl --fail --silent --show-error
+          --retry 5 --retry-delay 5 --retry-all-errors
+          "${{ steps.deploy.outputs.url }}/ready"

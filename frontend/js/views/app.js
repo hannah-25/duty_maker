@@ -1,3 +1,4 @@
+import { api } from "../api.js";
 import { state, resetAuth, resetWard } from "../state.js";
 import { renderAccounts } from "./accounts.js";
 import { renderRequirements } from "./requirements.js";
@@ -29,10 +30,22 @@ export function renderApp(root, navigate) {
 
   root.innerHTML = `
     <div class="sidebar-user">
-      <strong>${state.name} (${state.isAdmin ? "관리자" : "사용자"})</strong>
-      <span class="caption" style="margin:0">${state.wardLabel}</span>
+      <strong>${escapeHtml(state.name)} (${state.isAdmin ? "관리자" : "사용자"})</strong>
+      <span class="caption" style="margin:0">${escapeHtml(state.wardLabel)}</span>
+      <button id="change-pin-btn">PIN 변경</button>
       <button id="logout-btn">로그아웃</button>
       <button id="switch-ward-btn">다른 병동으로 전환</button>
+    </div>
+    <div id="change-pin-panel" class="card" style="display:none;margin-bottom:1rem">
+      <label for="cp-current">현재 PIN</label>
+      <input type="password" id="cp-current" autocomplete="off" />
+      <label for="cp-new">새 PIN (4~6자리 숫자)</label>
+      <input type="password" id="cp-new" autocomplete="off" />
+      <label for="cp-new2">새 PIN 확인</label>
+      <input type="password" id="cp-new2" autocomplete="off" />
+      <button class="primary" id="cp-submit">변경</button>
+      <button id="cp-cancel" style="margin-top:0.6rem">취소</button>
+      <div id="cp-msg"></div>
     </div>
     <h1>Duty Maker</h1>
     <div class="tab-bar" id="tab-bar"></div>
@@ -45,8 +58,9 @@ export function renderApp(root, navigate) {
   });
   root.querySelector("#switch-ward-btn").addEventListener("click", () => {
     resetWard();
-    navigate();
+    location.hash = "#/wards";
   });
+  wireChangePin(root);
 
   const tabBar = root.querySelector("#tab-bar");
   const content = root.querySelector("#tab-content");
@@ -81,6 +95,50 @@ export function renderApp(root, navigate) {
   }
 
   renderActiveTab();
+}
+
+function wireChangePin(root) {
+  const btn = root.querySelector("#change-pin-btn");
+  const panel = root.querySelector("#change-pin-panel");
+  const current = panel.querySelector("#cp-current");
+  const next = panel.querySelector("#cp-new");
+  const next2 = panel.querySelector("#cp-new2");
+  const msg = panel.querySelector("#cp-msg");
+
+  const setMsg = (text, isError) => {
+    msg.innerHTML = text ? `<div class="${isError ? "error-banner" : "caption"}">${escapeHtml(text)}</div>` : "";
+  };
+  const reset = () => {
+    current.value = next.value = next2.value = "";
+    setMsg("");
+  };
+
+  btn.addEventListener("click", () => {
+    const opening = panel.style.display === "none";
+    panel.style.display = opening ? "" : "none";
+    if (opening) {
+      reset();
+      current.focus();
+    }
+  });
+  panel.querySelector("#cp-cancel").addEventListener("click", () => {
+    panel.style.display = "none";
+    reset();
+  });
+  panel.querySelector("#cp-submit").addEventListener("click", async () => {
+    setMsg("");
+    if (next.value !== next2.value) {
+      setMsg("새 PIN 확인이 일치하지 않습니다.", true);
+      return;
+    }
+    try {
+      await api.changePin({ current_pin: current.value, new_pin: next.value });
+      current.value = next.value = next2.value = "";
+      setMsg("PIN이 변경되었습니다.", false);
+    } catch (err) {
+      setMsg(err.message, true);
+    }
+  });
 }
 
 function escapeHtml(value) {

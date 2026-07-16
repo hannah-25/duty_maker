@@ -47,7 +47,8 @@ uvicorn api.main:app --reload
 | --- | --- |
 | `SECRET_KEY` | JWT 서명 키. 배포 환경에서 필수로 설정하세요. |
 | `WARD_REGISTRATION_CODE` | 새 병동 등록 코드. 기본값은 `admin1234`입니다. |
-| `FIREBASE_CREDENTIALS_JSON` | Firebase 서비스 계정 JSON 문자열. 없으면 로컬 `data/`에 저장합니다. |
+| `STORAGE_BACKEND` | `local`(기본값) 또는 `firestore`. Cloud Run에서는 `firestore`로 설정합니다. |
+| `FIREBASE_CREDENTIALS_JSON` | 로컬에서 Firestore를 사용할 때 선택적으로 쓰는 서비스 계정 JSON 문자열입니다. |
 
 ## 프로젝트 구조
 

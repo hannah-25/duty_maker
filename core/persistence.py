@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import date
 from pathlib import Path
 
@@ -110,7 +111,13 @@ def _template_to_list(template) -> list[list[int]]:
 
 
 def _template_from_list(data) -> tuple[ShiftRequirement, ShiftRequirement, ShiftRequirement]:
-    return tuple(ShiftRequirement(minimum=row[0], maximum=row[1], target=row[2]) for row in data)
+    rows = [
+        [row["minimum"], row["maximum"], row["target"]]
+        if isinstance(row, dict)
+        else row
+        for row in data
+    ]
+    return tuple(ShiftRequirement(minimum=row[0], maximum=row[1], target=row[2]) for row in rows)
 
 
 def _result_to_dict(r: ScheduleResult) -> dict:
@@ -182,29 +189,53 @@ def apply_state(ss, payload: dict) -> None:
 
 
 # ---------------------------------------------------------------- backend --
+def storage_backend() -> str:
+    """Return the explicitly selected storage backend."""
+    backend = os.environ.get("STORAGE_BACKEND", "local").strip().lower()
+    if backend not in {"local", "firestore"}:
+        raise RuntimeError("STORAGE_BACKEND must be 'local' or 'firestore'")
+    return backend
+
+
 def _firestore():
-    """설정이 있으면 Firestore 클라이언트, 없으면 None."""
-    import os
+    """Return Firestore client, or None only when local storage is selected."""
+    if storage_backend() == "local":
+        return None
 
     conf = None
     raw = os.environ.get("FIREBASE_CREDENTIALS_JSON")
     if raw:
         try:
             conf = json.loads(raw)
-        except Exception:
-            conf = None
-    if not conf:
-        return None
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("FIREBASE_CREDENTIALS_JSON is not valid JSON") from exc
     import firebase_admin
     from firebase_admin import credentials, firestore
 
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app(credentials.Certificate(dict(conf)))
-    return firestore.client()
+    try:
+        if not firebase_admin._apps:
+            if conf:
+                firebase_admin.initialize_app(credentials.Certificate(dict(conf)))
+            else:
+                firebase_admin.initialize_app()
+        return firestore.client()
+    except Exception as exc:
+        raise RuntimeError("Failed to initialize Firestore backend") from exc
 
 
 def is_remote_backend() -> bool:
-    return _firestore() is not None
+    return storage_backend() == "firestore"
+
+
+def validate_storage_backend() -> None:
+    """Fail fast when the configured backend cannot be reached."""
+    if storage_backend() == "local":
+        return
+    try:
+        db = _firestore()
+        next(iter(db.collection(_FS_WARDS_COLLECTION).limit(1).stream()), None)
+    except Exception as exc:
+        raise RuntimeError("Firestore backend is not ready") from exc
 
 
 def _ward_dir(ward_id: str) -> Path:
@@ -221,6 +252,41 @@ def _split_requests(payload: dict) -> tuple[dict, dict[str, dict]]:
     rest = {k: v for k, v in payload.items() if k != "duty_requests"}
     requests = {_request_doc_id(rd): rd for rd in payload.get("duty_requests", [])}
     return rest, requests
+
+
+def _to_firestore_payload(payload: dict) -> dict:
+    """Convert JSON-friendly state into Firestore-friendly state."""
+    converted = dict(payload)
+    for key in ("weekday_template", "weekend_template"):
+        if key in converted:
+            converted[key] = [
+                {"minimum": row[0], "maximum": row[1], "target": row[2]}
+                for row in converted[key]
+            ]
+    result = converted.get("schedule_result")
+    if result and "assignments" in result:
+        result = dict(result)
+        result["assignments"] = [
+            {"nurse_name": name, "day": day, "shift": shift}
+            for name, day, shift in result["assignments"]
+        ]
+        converted["schedule_result"] = result
+    return converted
+
+
+def _from_firestore_payload(payload: dict) -> dict:
+    converted = dict(payload)
+    result = converted.get("schedule_result")
+    if result and "assignments" in result:
+        result = dict(result)
+        result["assignments"] = [
+            [row["nurse_name"], row["day"], row["shift"]]
+            if isinstance(row, dict)
+            else row
+            for row in result["assignments"]
+        ]
+        converted["schedule_result"] = result
+    return converted
 
 
 # ------------------------------------------------------------------ wards --
@@ -267,7 +333,7 @@ def load_state(ward_id: str) -> dict | None:
     if db is not None:
         ward_ref = db.collection(_FS_WARDS_COLLECTION).document(ward_id)
         doc = ward_ref.collection(_FS_STATE_COLLECTION).document(_FS_STATE_DOC).get()
-        payload = doc.to_dict() if doc.exists else None
+        payload = _from_firestore_payload(doc.to_dict()) if doc.exists else None
         if payload is None:
             return None
         payload["duty_requests"] = [
@@ -289,18 +355,15 @@ def save_state(ss, ward_id: str, requests_only: bool = False) -> None:
     requests_only: 일반 사용자 세션용 — 듀티 신청만 기록해서, 그 사이 관리자가
     바꾼 명단/설정을 오래된 값으로 덮어쓰지 않게 한다.
     """
-    try:
-        payload = serialize_state(ss)
-        text = json.dumps(payload, ensure_ascii=False, indent=1)
-    except Exception:
-        return
+    payload = serialize_state(ss)
+    text = json.dumps(payload, ensure_ascii=False, indent=1)
     if ss.get("_last_saved_state") == text:
         return
 
     db = _firestore()
     if db is not None:
         ward_ref = db.collection(_FS_WARDS_COLLECTION).document(ward_id)
-        rest, requests = _split_requests(payload)
+        rest, requests = _split_requests(_to_firestore_payload(payload))
         last_text = ss.get("_last_saved_state")
         if last_text:
             _, last_requests = _split_requests(json.loads(last_text))

@@ -40,3 +40,17 @@ def check_login(users: dict[str, dict], name: str, pin: str) -> bool:
     if not account:
         return False
     return verify_pin(pin, account.get("pin_salt", ""), account.get("pin_hash", ""))
+
+
+def change_pin(users: dict[str, dict], name: str, new_pin: str) -> dict[str, dict]:
+    """계정을 유지한 채 PIN만 교체한다(관리자 권한 등 다른 필드는 보존)."""
+    account = users.get(name)
+    if not account:
+        return users
+    salt, digest = hash_pin(new_pin)
+    users = dict(users)
+    updated = dict(account)
+    updated["pin_salt"] = salt
+    updated["pin_hash"] = digest
+    users[name] = updated
+    return users

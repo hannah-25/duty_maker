@@ -3,6 +3,9 @@
 <link rel="stylesheet" href="css/style.css" />
 <div id="app-root"></div>
 <script type="module">
+  import { initializeFirebaseAnalytics } from "./js/firebase.js";
   import { navigate } from "./js/router.js";
+
+  initializeFirebaseAnalytics();
   navigate();
 </script>

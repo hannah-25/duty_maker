@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+data
+sample_output
+.sisyphus
+.claude
+*-firebase-adminsdk-*.json

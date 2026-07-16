@@ -4,84 +4,144 @@ import { state, resetWard } from "../state.js";
 export function renderLogin(root, navigate) {
   root.innerHTML = `
     <h1>Duty Maker</h1>
-    <p class="caption">${state.wardLabel}</p>
-    <p class="caption">이름과 PIN으로 로그인하세요. 새로고침하면 다시 로그인해야 합니다.</p>
-    <div class="tab-bar">
-      <button class="active" data-tab="login">로그인</button>
-      <button data-tab="register">PIN 등록</button>
-    </div>
-    <div class="card" id="login-panel">
-      <label for="login-name">이름</label>
-      <input type="text" id="login-name" />
-      <label for="login-pin">PIN (4~6자리 숫자)</label>
-      <input type="password" id="login-pin" />
-      <button class="primary" id="login-btn">로그인</button>
-      <div id="login-error"></div>
-    </div>
-    <div class="card" id="register-panel" style="display:none">
-      <label for="reg-name">이름</label>
-      <input type="text" id="reg-name" />
-      <label for="reg-pin">PIN (4~6자리 숫자)</label>
-      <input type="password" id="reg-pin" />
-      <label for="reg-pin2">PIN 확인</label>
-      <input type="password" id="reg-pin2" />
-      <button class="primary" id="register-btn">등록</button>
-      <div id="register-error"></div>
-    </div>
+    <p class="caption">${escapeHtml(state.wardLabel)} · 새로고침하면 다시 로그인해야 합니다.</p>
+    <div class="card" id="auth-card"></div>
     <button id="back-btn" style="margin-top:1.4rem">다른 병동으로</button>
   `;
 
-  const loginPanel = root.querySelector("#login-panel");
-  const registerPanel = root.querySelector("#register-panel");
-  for (const btn of root.querySelectorAll(".tab-bar button")) {
-    btn.addEventListener("click", () => {
-      for (const button of root.querySelectorAll(".tab-bar button")) button.classList.remove("active");
-      btn.classList.add("active");
-      const isLogin = btn.dataset.tab === "login";
-      loginPanel.style.display = isLogin ? "" : "none";
-      registerPanel.style.display = isLogin ? "none" : "";
+  const card = root.querySelector("#auth-card");
+  root.querySelector("#back-btn").addEventListener("click", () => {
+    resetWard();
+    location.hash = "#/wards";
+  });
+
+  // 1단계: 이름 입력 → 계정/명단 조회 후 로그인 또는 PIN 등록으로 분기
+  function renderNameStep(prefillName = "", errorMsg = "") {
+    card.innerHTML = `
+      <label for="login-name">이름</label>
+      <input type="text" id="login-name" autocomplete="off" />
+      <button class="primary" id="next-btn">다음</button>
+      <div id="auth-error"></div>
+    `;
+    const nameInput = card.querySelector("#login-name");
+    nameInput.value = prefillName;
+    if (errorMsg) showError(errorMsg);
+    nameInput.focus();
+
+    const submit = async () => {
+      showError("");
+      const name = nameInput.value.trim();
+      if (!name) {
+        showError("이름을 입력하세요.");
+        return;
+      }
+      try {
+        const result = await api.lookup({ ward_id: state.wardId, name });
+        if (result.registered) {
+          renderPinStep(name);
+        } else if (result.in_roster) {
+          renderRegisterStep(name);
+        } else {
+          showError("명단에 없는 이름입니다. 관리자에게 문의하세요.");
+        }
+      } catch (err) {
+        showError(err.message);
+      }
+    };
+
+    card.querySelector("#next-btn").addEventListener("click", submit);
+    nameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
     });
   }
 
-  root.querySelector("#login-btn").addEventListener("click", async () => {
-    const errorBox = root.querySelector("#login-error");
-    errorBox.innerHTML = "";
-    const name = root.querySelector("#login-name").value.trim();
-    const pin = root.querySelector("#login-pin").value;
-    try {
-      const result = await api.login({ ward_id: state.wardId, name, pin });
-      state.token = result.token;
-      state.name = result.name;
-      state.isAdmin = result.is_admin;
-      navigate();
-    } catch (err) {
-      errorBox.innerHTML = `<div class="error-banner">${err.message}</div>`;
-    }
-  });
+  // 2단계-A: 이미 등록된 계정 → PIN 입력 후 로그인
+  function renderPinStep(name) {
+    card.innerHTML = `
+      <p class="caption" style="margin-top:0"><strong>${escapeHtml(name)}</strong> 님, PIN을 입력하세요.</p>
+      <label for="login-pin">PIN</label>
+      <input type="password" id="login-pin" autocomplete="off" />
+      <button class="primary" id="login-btn">로그인</button>
+      <button id="change-name-btn" style="margin-top:0.6rem">이름 다시 입력</button>
+      <div id="auth-error"></div>
+    `;
+    const pinInput = card.querySelector("#login-pin");
+    pinInput.focus();
 
-  root.querySelector("#register-btn").addEventListener("click", async () => {
-    const errorBox = root.querySelector("#register-error");
-    errorBox.innerHTML = "";
-    const name = root.querySelector("#reg-name").value.trim();
-    const pin = root.querySelector("#reg-pin").value;
-    const pin2 = root.querySelector("#reg-pin2").value;
-    if (pin !== pin2) {
-      errorBox.innerHTML = `<div class="error-banner">PIN 확인이 일치하지 않습니다.</div>`;
-      return;
-    }
-    try {
-      const result = await api.register({ ward_id: state.wardId, name, pin });
-      state.token = result.token;
-      state.name = result.name;
-      state.isAdmin = result.is_admin;
-      navigate();
-    } catch (err) {
-      errorBox.innerHTML = `<div class="error-banner">${err.message}</div>`;
-    }
-  });
+    const submit = async () => {
+      showError("");
+      try {
+        const result = await api.login({ ward_id: state.wardId, name, pin: pinInput.value });
+        applyAuth(result);
+        navigate();
+      } catch (err) {
+        showError(err.message);
+      }
+    };
 
-  root.querySelector("#back-btn").addEventListener("click", () => {
-    resetWard();
-    navigate();
-  });
+    card.querySelector("#login-btn").addEventListener("click", submit);
+    pinInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+    card.querySelector("#change-name-btn").addEventListener("click", () => renderNameStep(name));
+  }
+
+  // 2단계-B: 명단엔 있으나 미등록 → PIN 설정 후 등록
+  function renderRegisterStep(name) {
+    card.innerHTML = `
+      <p class="caption" style="margin-top:0"><strong>${escapeHtml(name)}</strong> 님, 처음이시네요. PIN을 설정하세요.</p>
+      <label for="reg-pin">PIN (4~6자리 숫자)</label>
+      <input type="password" id="reg-pin" autocomplete="off" />
+      <label for="reg-pin2">PIN 확인</label>
+      <input type="password" id="reg-pin2" autocomplete="off" />
+      <button class="primary" id="register-btn">등록</button>
+      <button id="change-name-btn" style="margin-top:0.6rem">이름 다시 입력</button>
+      <div id="auth-error"></div>
+    `;
+    const pin = card.querySelector("#reg-pin");
+    const pin2 = card.querySelector("#reg-pin2");
+    pin.focus();
+
+    const submit = async () => {
+      showError("");
+      if (pin.value !== pin2.value) {
+        showError("PIN 확인이 일치하지 않습니다.");
+        return;
+      }
+      try {
+        const result = await api.register({ ward_id: state.wardId, name, pin: pin.value });
+        applyAuth(result);
+        navigate();
+      } catch (err) {
+        showError(err.message);
+      }
+    };
+
+    card.querySelector("#register-btn").addEventListener("click", submit);
+    pin2.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+    card.querySelector("#change-name-btn").addEventListener("click", () => renderNameStep(name));
+  }
+
+  function applyAuth(result) {
+    state.token = result.token;
+    state.name = result.name;
+    state.isAdmin = result.is_admin;
+  }
+
+  function showError(message) {
+    const box = card.querySelector("#auth-error");
+    if (box) box.innerHTML = message ? `<div class="error-banner">${escapeHtml(message)}</div>` : "";
+  }
+
+  renderNameStep();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

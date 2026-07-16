@@ -4,9 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.deps import CurrentUser, require_admin
 from api.schemas import AccountOut, AccountsOut, AccountUpdate
+from core.auth import change_pin
 from core.persistence import load_state, load_users, save_users
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+
+# 관리자 초기화 시 지정되는 임시 PIN. 사용자는 로그인 후 반드시 변경해야 한다.
+RESET_PIN = "1234"
 
 
 def _roster_names(ward_id: str) -> set[str]:
@@ -50,6 +54,19 @@ def update_account(
     if name not in users:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "계정을 찾을 수 없습니다.")
     users[name]["is_admin"] = body.is_admin
+    save_users(user.ward_id, users)
+    return _accounts_out(user.ward_id, user.name)
+
+
+@router.post("/{name}/reset-pin", response_model=AccountsOut)
+def reset_pin(
+    name: str,
+    user: CurrentUser = Depends(require_admin),
+) -> AccountsOut:
+    users = load_users(user.ward_id)
+    if name not in users:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "계정을 찾을 수 없습니다.")
+    users = change_pin(users, name, RESET_PIN)
     save_users(user.ward_id, users)
     return _accounts_out(user.ward_id, user.name)
 

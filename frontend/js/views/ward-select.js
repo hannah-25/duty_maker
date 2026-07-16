@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { state } from "../state.js";
+import { setWard, state } from "../state.js";
 
 export async function renderWardSelect(root, navigate) {
   root.innerHTML = `
@@ -10,8 +10,8 @@ export async function renderWardSelect(root, navigate) {
       <select id="ward-select"><option value="">불러오는 중...</option></select>
       <button class="primary" id="continue-btn" disabled>선택한 병동으로 계속</button>
     </div>
-    <div class="card" style="margin-top:1.4rem">
-      <strong>새 병원/병동 등록</strong>
+    <button id="toggle-register" style="margin-top:1.4rem">새 병원/병동 등록 ▾</button>
+    <div class="card" id="register-card" style="margin-top:0.8rem;display:none">
       <label for="reg-hospital">병원 이름</label>
       <input type="text" id="reg-hospital" />
       <label for="reg-ward">병동 이름</label>
@@ -58,12 +58,20 @@ export async function renderWardSelect(root, navigate) {
     continueBtn.disabled = !select.value;
   });
 
+  const toggle = root.querySelector("#toggle-register");
+  const registerCard = root.querySelector("#register-card");
+  toggle.addEventListener("click", () => {
+    const opening = registerCard.style.display === "none";
+    registerCard.style.display = opening ? "" : "none";
+    toggle.textContent = opening ? "새 병원/병동 등록 ▴" : "새 병원/병동 등록 ▾";
+    if (opening) root.querySelector("#reg-hospital").focus();
+  });
+
   continueBtn.addEventListener("click", () => {
     const ward = wards.find((item) => item.ward_id === select.value);
     if (!ward) return;
-    state.wardId = ward.ward_id;
-    state.wardLabel = `${ward.hospital_name} - ${ward.ward_name}`;
-    navigate();
+    setWard(ward.ward_id, `${ward.hospital_name} - ${ward.ward_name}`);
+    location.hash = `#/wards/${encodeURIComponent(ward.ward_id)}/login`;
   });
 
   root.querySelector("#register-btn").addEventListener("click", async () => {
@@ -95,9 +103,8 @@ export async function renderWardSelect(root, navigate) {
       state.token = result.token;
       state.name = result.name;
       state.isAdmin = result.is_admin;
-      state.wardId = result.ward_id;
-      state.wardLabel = `${hospital_name} - ${ward_name}`;
-      navigate();
+      setWard(result.ward_id, `${hospital_name} - ${ward_name}`);
+      location.hash = `#/wards/${encodeURIComponent(result.ward_id)}/app`;
     } catch (err) {
       errorBox.innerHTML = `<div class="error-banner">${err.message}</div>`;
     }

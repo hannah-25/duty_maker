@@ -41,6 +41,21 @@ class RegisterRequest(BaseModel):
     pin: str
 
 
+class LookupRequest(BaseModel):
+    ward_id: str
+    name: str = Field(min_length=1)
+
+
+class LookupOut(BaseModel):
+    registered: bool
+    in_roster: bool
+
+
+class ChangePinRequest(BaseModel):
+    current_pin: str
+    new_pin: str
+
+
 class NurseIn(BaseModel):
     name: str = Field(min_length=1)
     level: str = "junior"

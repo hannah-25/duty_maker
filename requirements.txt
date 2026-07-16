@@ -1,5 +1,6 @@
 ortools>=9.9
 pandas>=2.2
+openpyxl>=3.1
 holidays>=0.50
 lxml>=5.0
 firebase-admin>=6.5
