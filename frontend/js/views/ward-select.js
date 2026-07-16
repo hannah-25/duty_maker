@@ -1,5 +1,7 @@
 import { api } from "../api.js";
-import { setWard, state } from "../state.js";
+import { applyAuth, setWard } from "../state.js";
+import { navigateTo, wardAppPath, wardLoginPath } from "../router.js";
+import { onClickBusy } from "../ui.js";
 
 export async function renderWardSelect(root, navigate) {
   root.innerHTML = `
@@ -71,10 +73,10 @@ export async function renderWardSelect(root, navigate) {
     const ward = wards.find((item) => item.ward_id === select.value);
     if (!ward) return;
     setWard(ward.ward_id, `${ward.hospital_name} - ${ward.ward_name}`);
-    location.hash = `#/wards/${encodeURIComponent(ward.ward_id)}/login`;
+    navigateTo(wardLoginPath(ward.ward_id));
   });
 
-  root.querySelector("#register-btn").addEventListener("click", async () => {
+  onClickBusy(root.querySelector("#register-btn"), async () => {
     const errorBox = root.querySelector("#reg-error");
     errorBox.innerHTML = "";
     const hospital_name = root.querySelector("#reg-hospital").value.trim();
@@ -100,11 +102,12 @@ export async function renderWardSelect(root, navigate) {
         admin_pin,
         registration_code,
       });
-      state.token = result.token;
-      state.name = result.name;
-      state.isAdmin = result.is_admin;
       setWard(result.ward_id, `${hospital_name} - ${ward_name}`);
-      location.hash = `#/wards/${encodeURIComponent(result.ward_id)}/app`;
+      if (!applyAuth(result.token)) {
+        navigateTo(wardLoginPath(result.ward_id));
+        return;
+      }
+      navigateTo(wardAppPath(result.ward_id));
     } catch (err) {
       errorBox.innerHTML = `<div class="error-banner">${err.message}</div>`;
     }

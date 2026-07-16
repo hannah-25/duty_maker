@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { onClickBusy } from "../ui.js";
 
 const LEVEL_LABELS = {
   senior_charge: "차지 전담",
@@ -128,20 +129,24 @@ function paint(container) {
     paintAssistantRows(container);
   });
 
-  container.querySelector("#save-roster-btn").addEventListener("click", async () => {
-    const status = container.querySelector("#roster-status");
-    status.textContent = "저장 중...";
-    try {
-      const result = await api.putRoster({ nurses, assistants });
-      nurses = result.nurses;
-      assistants = result.assistants;
-      paintNurseRows(container);
-      paintAssistantRows(container);
-      status.textContent = "저장되었습니다.";
-    } catch (err) {
-      status.textContent = `오류: ${err.message}`;
-    }
-  });
+  onClickBusy(
+    container.querySelector("#save-roster-btn"),
+    async () => {
+      const status = container.querySelector("#roster-status");
+      status.textContent = "저장 중...";
+      try {
+        const result = await api.putRoster({ nurses, assistants });
+        nurses = result.nurses;
+        assistants = result.assistants;
+        paintNurseRows(container);
+        paintAssistantRows(container);
+        status.textContent = "저장되었습니다.";
+      } catch (err) {
+        status.textContent = `오류: ${err.message}`;
+      }
+    },
+    "저장 중...",
+  );
 }
 
 function paintNurseRows(container) {

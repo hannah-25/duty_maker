@@ -1,6 +1,32 @@
-import { state } from "./state.js";
+import { resetAuth, state } from "./state.js";
 
 const API_BASE = "/api";
+
+export const AUTH_EXPIRED_EVENT = "dutymaker:auth-expired";
+
+/**
+ * 로그인해 둔 세션이 서버에서 거부되면(12시간 만료 등) 인증을 비우고 알린다.
+ * 라우터가 이 이벤트를 받아 로그인 화면으로 돌린다 — 직접 import하면
+ * router -> api -> router 순환이 된다.
+ *
+ * state.token이 있을 때만 세션 만료로 본다. 로그인 실패도 401이라서,
+ * 이 조건이 없으면 PIN을 틀렸을 때 화면이 통째로 다시 그려지며 에러 문구가 사라진다.
+ */
+function handleUnauthorized() {
+  if (!state.token) return;
+  resetAuth();
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+}
+
+async function readErrorDetail(res) {
+  let detail = res.statusText;
+  try {
+    detail = (await res.json()).detail ?? detail;
+  } catch {
+    /* response body wasn't JSON */
+  }
+  return detail;
+}
 
 async function request(path, { method = "GET", body } = {}) {
   const headers = { "Content-Type": "application/json" };
@@ -11,12 +37,8 @@ async function request(path, { method = "GET", body } = {}) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      detail = (await res.json()).detail ?? detail;
-    } catch {
-      /* response body wasn't JSON */
-    }
+    const detail = await readErrorDetail(res);
+    if (res.status === 401) handleUnauthorized();
     throw new Error(detail);
   }
   if (res.status === 204) return null;
@@ -28,12 +50,8 @@ async function download(path) {
   if (state.token) headers["Authorization"] = `Bearer ${state.token}`;
   const res = await fetch(`${API_BASE}${path}`, { headers });
   if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      detail = (await res.json()).detail ?? detail;
-    } catch {
-      /* response body wasn't JSON */
-    }
+    const detail = await readErrorDetail(res);
+    if (res.status === 401) handleUnauthorized();
     throw new Error(detail);
   }
   const blob = await res.blob();

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.routers import (
     accounts,
@@ -20,6 +21,23 @@ from api.routers import (
 from core.persistence import storage_backend, validate_storage_backend
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+
+class SPAStaticFiles(StaticFiles):
+    """정적 파일이 없으면 index.html을 돌려주는 SPA 폴백.
+
+    클린 URL(예: /wards/xxx/app)로 직접 들어오거나 새로고침해도
+    프론트엔드가 클라이언트 라우팅으로 화면을 그릴 수 있게 한다.
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            # /api/* 오요청은 그대로 404로 두고, 그 외 경로만 앱 셸로 폴백한다.
+            if exc.status_code == 404 and not path.startswith("api"):
+                return await super().get_response("index.html", scope)
+            raise
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -57,4 +75,4 @@ def ready() -> dict[str, str]:
     return {"status": "ready", "storage": storage_backend()}
 
 if FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    app.mount("/", SPAStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

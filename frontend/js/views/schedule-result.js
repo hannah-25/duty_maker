@@ -1,5 +1,6 @@
 import { api } from "../api.js";
 import { state } from "../state.js";
+import { onClickBusy } from "../ui.js";
 
 const WEEKDAY_KR = ["일", "월", "화", "수", "목", "금", "토"];
 const OFF_SHIFTS = ["O", "연차"];
@@ -34,35 +35,52 @@ function paint(container) {
   `;
 
   if (state.isAdmin) {
-    container.querySelector("#generate-schedule-btn").addEventListener("click", async () => {
-      const status = container.querySelector("#schedule-status");
-      status.innerHTML = `<p class="caption">근무표 생성 중...</p>`;
-      try {
-        current = await api.generateSchedule();
-        paint(container);
-      } catch (err) {
-        status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
-      }
-    });
+    onClickBusy(
+      container.querySelector("#generate-schedule-btn"),
+      async () => {
+        const status = container.querySelector("#schedule-status");
+        status.innerHTML = `<p class="caption">근무표 생성 중...</p>`;
+        try {
+          current = await api.generateSchedule();
+          paint(container);
+        } catch (err) {
+          status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+        }
+      },
+      "생성 중...",
+    );
     const publishToggle = container.querySelector("#publish-toggle");
     if (publishToggle) {
       publishToggle.addEventListener("change", async (e) => {
-        current = await api.publishSchedule({ published: e.target.checked });
-        paint(container);
+        // 요청이 끝나기 전에 다시 누르면 마지막 응답이 뒤늦게 덮어쓸 수 있다.
+        publishToggle.disabled = true;
+        const status = container.querySelector("#schedule-status");
+        try {
+          current = await api.publishSchedule({ published: e.target.checked });
+          paint(container);
+        } catch (err) {
+          publishToggle.checked = !e.target.checked;
+          publishToggle.disabled = false;
+          status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+        }
       });
     }
   }
   for (const button of container.querySelectorAll("[data-download]")) {
-    button.addEventListener("click", async () => {
-      const status = container.querySelector("#schedule-status");
-      status.innerHTML = "";
-      try {
-        if (button.dataset.download === "hwpx") await api.downloadHwpx();
-        if (button.dataset.download === "xlsx") await api.downloadXlsx();
-      } catch (err) {
-        status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
-      }
-    });
+    onClickBusy(
+      button,
+      async () => {
+        const status = container.querySelector("#schedule-status");
+        status.innerHTML = "";
+        try {
+          if (button.dataset.download === "hwpx") await api.downloadHwpx();
+          if (button.dataset.download === "xlsx") await api.downloadXlsx();
+        } catch (err) {
+          status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+        }
+      },
+      "다운로드 중...",
+    );
   }
 
   paintSchedule(container);

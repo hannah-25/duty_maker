@@ -85,6 +85,19 @@ button:not(.primary):hover {
   background: #eef2f7;
 }
 
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.primary:disabled:hover {
+  background: #2563eb;
+}
+
+button:not(.primary):disabled:hover {
+  background: #f8fafc;
+}
+
 .error-banner {
   background: #fee2e2;
   color: #991b1b;
@@ -115,12 +128,47 @@ button:not(.primary):hover {
   border-bottom: 2px solid #2563eb;
 }
 
-.sidebar-user {
+.app-header {
   display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  max-width: 260px;
-  margin-bottom: 1.5rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-bottom: 1rem;
+  margin-bottom: 1.2rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.app-header-title h1 {
+  margin: 0;
+}
+
+.app-header-title .caption {
+  margin: 0.15rem 0 0;
+}
+
+.app-header-user {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.app-header-user button {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+.user-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-right: 0.4rem;
+}
+
+.user-badge span {
+  color: #6b7280;
+  font-size: 0.82rem;
 }
 
 .roster-row {
@@ -913,6 +961,11 @@ kbd {
 }
 
 @media (max-width: 760px) {
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .requirements-grid,
   .template-grid {
     grid-template-columns: 1fr;

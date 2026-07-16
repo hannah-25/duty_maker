@@ -1,5 +1,7 @@
 import { api } from "../api.js";
 import { state, resetAuth, resetWard } from "../state.js";
+import { navigateTo, wardSelectPath } from "../router.js";
+import { onClickBusy } from "../ui.js";
 import { renderAccounts } from "./accounts.js";
 import { renderRequirements } from "./requirements.js";
 import { renderRequests } from "./requests.js";
@@ -29,13 +31,21 @@ export function renderApp(root, navigate) {
   }
 
   root.innerHTML = `
-    <div class="sidebar-user">
-      <strong>${escapeHtml(state.name)} (${state.isAdmin ? "관리자" : "사용자"})</strong>
-      <span class="caption" style="margin:0">${escapeHtml(state.wardLabel)}</span>
-      <button id="change-pin-btn">PIN 변경</button>
-      <button id="logout-btn">로그아웃</button>
-      <button id="switch-ward-btn">다른 병동으로 전환</button>
-    </div>
+    <header class="app-header">
+      <div class="app-header-title">
+        <h1>Duty Maker</h1>
+        <span class="caption">${escapeHtml(state.wardLabel)}</span>
+      </div>
+      <div class="app-header-user">
+        <span class="user-badge">
+          <strong>${escapeHtml(state.name)}</strong>
+          <span>${state.isAdmin ? "관리자" : "사용자"}</span>
+        </span>
+        <button id="change-pin-btn">PIN 변경</button>
+        <button id="logout-btn">로그아웃</button>
+        <button id="switch-ward-btn">병동 전환</button>
+      </div>
+    </header>
     <div id="change-pin-panel" class="card" style="display:none;margin-bottom:1rem">
       <label for="cp-current">현재 PIN</label>
       <input type="password" id="cp-current" autocomplete="off" />
@@ -47,7 +57,6 @@ export function renderApp(root, navigate) {
       <button id="cp-cancel" style="margin-top:0.6rem">취소</button>
       <div id="cp-msg"></div>
     </div>
-    <h1>Duty Maker</h1>
     <div class="tab-bar" id="tab-bar"></div>
     <div id="tab-content"></div>
   `;
@@ -58,7 +67,7 @@ export function renderApp(root, navigate) {
   });
   root.querySelector("#switch-ward-btn").addEventListener("click", () => {
     resetWard();
-    location.hash = "#/wards";
+    navigateTo(wardSelectPath());
   });
   wireChangePin(root);
 
@@ -125,7 +134,7 @@ function wireChangePin(root) {
     panel.style.display = "none";
     reset();
   });
-  panel.querySelector("#cp-submit").addEventListener("click", async () => {
+  onClickBusy(panel.querySelector("#cp-submit"), async () => {
     setMsg("");
     if (next.value !== next2.value) {
       setMsg("새 PIN 확인이 일치하지 않습니다.", true);

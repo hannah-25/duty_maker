@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { onClickBusy } from "../ui.js";
 
 let current = null;
 let settings = null;
@@ -48,7 +49,7 @@ function paint(container) {
   paintHolidays(container);
   paintOverrides(container);
 
-  container.querySelector("#reload-month-btn").addEventListener("click", async () => {
+  onClickBusy(container.querySelector("#reload-month-btn"), async () => {
     const year = Number(container.querySelector("#req-year").value);
     const month = Number(container.querySelector("#req-month").value);
     current.year = year;
@@ -65,7 +66,7 @@ function paint(container) {
     paintOverrides(container);
   });
 
-  container.querySelector("#save-requirements-btn").addEventListener("click", () => save(container));
+  onClickBusy(container.querySelector("#save-requirements-btn"), () => save(container), "저장 중...");
 }
 
 function templateBlock(key, title, template) {

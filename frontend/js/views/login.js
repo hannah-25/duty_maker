@@ -1,10 +1,12 @@
 import { api } from "../api.js";
-import { state, resetWard } from "../state.js";
+import { applyAuth, state, resetWard } from "../state.js";
+import { navigateTo, wardSelectPath } from "../router.js";
+import { onClickBusy, withBusy } from "../ui.js";
 
 export function renderLogin(root, navigate) {
   root.innerHTML = `
     <h1>Duty Maker</h1>
-    <p class="caption">${escapeHtml(state.wardLabel)} · 새로고침하면 다시 로그인해야 합니다.</p>
+    <p class="caption">${escapeHtml(state.wardLabel)}</p>
     <div class="card" id="auth-card"></div>
     <button id="back-btn" style="margin-top:1.4rem">다른 병동으로</button>
   `;
@@ -12,7 +14,7 @@ export function renderLogin(root, navigate) {
   const card = root.querySelector("#auth-card");
   root.querySelector("#back-btn").addEventListener("click", () => {
     resetWard();
-    location.hash = "#/wards";
+    navigateTo(wardSelectPath());
   });
 
   // 1단계: 이름 입력 → 계정/명단 조회 후 로그인 또는 PIN 등록으로 분기
@@ -28,6 +30,7 @@ export function renderLogin(root, navigate) {
     if (errorMsg) showError(errorMsg);
     nameInput.focus();
 
+    const nextBtn = card.querySelector("#next-btn");
     const submit = async () => {
       showError("");
       const name = nameInput.value.trim();
@@ -49,9 +52,9 @@ export function renderLogin(root, navigate) {
       }
     };
 
-    card.querySelector("#next-btn").addEventListener("click", submit);
+    onClickBusy(nextBtn, submit);
     nameInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") submit();
+      if (e.key === "Enter") withBusy(nextBtn, submit);
     });
   }
 
@@ -66,22 +69,26 @@ export function renderLogin(root, navigate) {
       <div id="auth-error"></div>
     `;
     const pinInput = card.querySelector("#login-pin");
+    const loginBtn = card.querySelector("#login-btn");
     pinInput.focus();
 
     const submit = async () => {
       showError("");
       try {
         const result = await api.login({ ward_id: state.wardId, name, pin: pinInput.value });
-        applyAuth(result);
+        if (!applyAuth(result.token)) {
+          showError("로그인 토큰을 읽지 못했습니다. 다시 시도해 주세요.");
+          return;
+        }
         navigate();
       } catch (err) {
         showError(err.message);
       }
     };
 
-    card.querySelector("#login-btn").addEventListener("click", submit);
+    onClickBusy(loginBtn, submit, "로그인 중...");
     pinInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") submit();
+      if (e.key === "Enter") withBusy(loginBtn, submit, "로그인 중...");
     });
     card.querySelector("#change-name-btn").addEventListener("click", () => renderNameStep(name));
   }
@@ -100,6 +107,7 @@ export function renderLogin(root, navigate) {
     `;
     const pin = card.querySelector("#reg-pin");
     const pin2 = card.querySelector("#reg-pin2");
+    const registerBtn = card.querySelector("#register-btn");
     pin.focus();
 
     const submit = async () => {
@@ -110,24 +118,21 @@ export function renderLogin(root, navigate) {
       }
       try {
         const result = await api.register({ ward_id: state.wardId, name, pin: pin.value });
-        applyAuth(result);
+        if (!applyAuth(result.token)) {
+          showError("로그인 토큰을 읽지 못했습니다. 다시 시도해 주세요.");
+          return;
+        }
         navigate();
       } catch (err) {
         showError(err.message);
       }
     };
 
-    card.querySelector("#register-btn").addEventListener("click", submit);
+    onClickBusy(registerBtn, submit, "등록 중...");
     pin2.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") submit();
+      if (e.key === "Enter") withBusy(registerBtn, submit, "등록 중...");
     });
     card.querySelector("#change-name-btn").addEventListener("click", () => renderNameStep(name));
-  }
-
-  function applyAuth(result) {
-    state.token = result.token;
-    state.name = result.name;
-    state.isAdmin = result.is_admin;
   }
 
   function showError(message) {

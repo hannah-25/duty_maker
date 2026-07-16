@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { onClickBusy } from "../ui.js";
 
 let current = null;
 
@@ -69,7 +70,7 @@ function paintRows(container) {
     });
   }
   for (const button of wrap.querySelectorAll("[data-reset]")) {
-    button.addEventListener("click", async () => {
+    onClickBusy(button, async () => {
       const name = button.dataset.reset;
       if (!confirm(`${name} 님의 PIN을 1234로 초기화할까요?`)) return;
       await update(container, () => api.resetPin(name));
