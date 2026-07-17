@@ -50,12 +50,6 @@ function paint(container) {
   paintOverrides(container);
 
   onClickBusy(container.querySelector("#reload-month-btn"), async () => {
-    const year = Number(container.querySelector("#req-year").value);
-    const month = Number(container.querySelector("#req-month").value);
-    current.year = year;
-    current.month = month;
-    current.selected_holidays = [];
-    current.date_overrides = [];
     await save(container, { silent: true });
     current = await api.getRequirements();
     paint(container);
@@ -158,7 +152,13 @@ async function save(container, { silent = false } = {}) {
   const status = container.querySelector("#requirements-status");
   if (status && !silent) status.textContent = "저장 중...";
   try {
+    const previousMonthKey = `${current.year}-${current.month}`;
     collect(container);
+    const nextMonthKey = `${current.year}-${current.month}`;
+    if (previousMonthKey !== nextMonthKey) {
+      current.selected_holidays = [];
+      current.date_overrides = [];
+    }
     [current, settings] = await Promise.all([
       api.putRequirements({
         year: current.year,

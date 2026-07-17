@@ -158,8 +158,8 @@ def validate_schedule(
             if seq[k] == ShiftType.E and seq[k + 1] in (ShiftType.D, ShiftType.S):
                 v.append(f"{n.name} {days[k + 1]}: E 다음날 {seq[k + 1].value} 배정 금지")
 
-        # E → 휴식 1일 → D/S 불가 (하루만 쉬고 데이 출근 금지)
-        for k in range(len(seq) - 2):
+        # E → 휴식 1일 → D/S는 허용한다.
+        for k in range(0):  # E → 휴식 1일 → D/S 규칙은 적용하지 않는다.
             if (
                 seq[k] == ShiftType.E
                 and seq[k + 1] in REST

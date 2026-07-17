@@ -86,6 +86,15 @@ export const api = {
   setRequestLock: (body) => request("/requests/lock", { method: "PUT", body }),
   getSchedule: () => request("/schedule"),
   generateSchedule: () => request("/schedule/generate", { method: "POST" }),
+  previewScheduleRegeneration: (body) => request("/schedule/regenerate-preview", { method: "POST", body }),
+  applyScheduleRegeneration: (previewId) => request("/schedule/regenerate-apply", {
+    method: "POST",
+    body: { preview_id: previewId },
+  }),
+  cancelScheduleRegeneration: (previewId) => request(`/schedule/regenerate-preview/${encodeURIComponent(previewId)}`, {
+    method: "DELETE",
+  }),
+  updateScheduleAssignment: (body) => request("/schedule/assignment", { method: "PATCH", body }),
   publishSchedule: (body) => request("/schedule/publish", { method: "PUT", body }),
   downloadHwpx: () => download("/exports/hwpx"),
   downloadXlsx: () => download("/exports/xlsx"),

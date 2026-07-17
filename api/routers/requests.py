@@ -45,10 +45,17 @@ def _request_out(req: DutyRequest) -> DutyRequestOut:
 
 
 def _visible_requests(ss: dict, user: CurrentUser) -> list[DutyRequest]:
-    requests = list(ss.get("duty_requests", []))
+    requests = _requests_for_target_month(ss)
     if user.is_admin:
         return requests
     return [req for req in requests if req.nurse_name == user.name]
+
+
+def _requests_for_target_month(ss: dict) -> list[DutyRequest]:
+    year = int(ss.get("year", 2026))
+    month = int(ss.get("month", 7))
+    valid_days = set(month_dates(year, month))
+    return [req for req in ss.get("duty_requests", []) if req.day in valid_days]
 
 
 def _out(ss: dict, user: CurrentUser) -> DutyRequestsOut:
@@ -84,6 +91,21 @@ def _dedupe(requests: list[DutyRequest]) -> list[DutyRequest]:
     return result
 
 
+def _replace_opposite_kind(
+    requests: list[DutyRequest], nurse_name: str, day: date, kind: str
+) -> list[DutyRequest]:
+    """A nurse cannot keep prefer and avoid requests on the same date."""
+    return [
+        req
+        for req in requests
+        if not (
+            req.nurse_name == nurse_name
+            and req.day == day
+            and getattr(req, "kind", "prefer") != kind
+        )
+    ]
+
+
 @router.get("", response_model=DutyRequestsOut)
 def get_requests(user: CurrentUser = Depends(get_current_user)) -> DutyRequestsOut:
     return _out(load_ward_state(user.ward_id), user)
@@ -111,9 +133,12 @@ def add_request(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "신청할 수 없는 근무 코드입니다.")
 
     day = _parse_date(body.date, int(ss.get("year", 2026)), int(ss.get("month", 7)))
+    existing = _replace_opposite_kind(
+        list(ss.get("duty_requests", [])), nurse_name, day, body.kind
+    )
     ss["duty_requests"] = _dedupe(
         [
-            *ss.get("duty_requests", []),
+            *existing,
             DutyRequest(
                 nurse_name=nurse_name,
                 day=day,

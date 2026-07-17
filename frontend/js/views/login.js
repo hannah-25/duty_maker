@@ -5,10 +5,13 @@ import { onClickBusy, withBusy } from "../ui.js";
 
 export function renderLogin(root, navigate) {
   root.innerHTML = `
-    <h1>Duty Maker</h1>
-    <p class="caption">${escapeHtml(state.wardLabel)}</p>
-    <div class="card" id="auth-card"></div>
-    <button id="back-btn" style="margin-top:1.4rem">다른 병동으로</button>
+    <div class="auth-shell">
+      <img class="brand-hero" src="assets/mascot.png" alt="" width="560" height="430" />
+      <h1>Duty Maker</h1>
+      <p class="caption">${escapeHtml(state.wardLabel)}</p>
+      <div class="card" id="auth-card"></div>
+      <button id="back-btn" style="margin-top:1.4rem">다른 병동으로</button>
+    </div>
   `;
 
   const card = root.querySelector("#auth-card");

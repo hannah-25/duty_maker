@@ -33,8 +33,11 @@ export function renderApp(root, navigate) {
   root.innerHTML = `
     <header class="app-header">
       <div class="app-header-title">
-        <h1>Duty Maker</h1>
-        <span class="caption">${escapeHtml(state.wardLabel)}</span>
+        <img class="brand-mark" src="assets/mascot-avatar.png" alt="" width="128" height="128" />
+        <div class="app-header-titles">
+          <h1>Duty Maker</h1>
+          <span class="caption">${escapeHtml(state.wardLabel)}</span>
+        </div>
       </div>
       <div class="app-header-user">
         <span class="user-badge">

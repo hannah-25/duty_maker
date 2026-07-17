@@ -58,6 +58,9 @@ def load_ward_state(ward_id: str) -> dict:
     ss.setdefault("selected_holidays", set())
     ss.setdefault("date_override_rows", [])
     ss.setdefault("date_overrides", {})
+    ss.setdefault("schedule_revision", 0)
+    ss.setdefault("schedule_previews", {})
+    ss.setdefault("manual_overrides", {})
     ss.setdefault("year", 2026)
     ss.setdefault("month", 7)
     if "weekday_template" not in ss or "weekend_template" not in ss:

@@ -28,7 +28,9 @@ export async function navigate() {
   if (navigating) return;
   navigating = true;
   try {
-    await syncRouteToState();
+    // 리다이렉트가 걸리면 예약된 navigate가 그리므로 여기서는 그리지 않는다.
+    // (그리면 async 뷰가 두 번 렌더되어 리스너가 중복으로 붙는다.)
+    if (await syncRouteToState()) return;
     if (!state.wardId) {
       renderWardSelect(root, navigate);
     } else if (!state.token) {
@@ -49,36 +51,34 @@ export async function navigate() {
   }
 }
 
+// 리다이렉트를 걸었으면 true를 돌려준다 — 호출부는 렌더를 건너뛰어야 한다.
 async function syncRouteToState() {
   const route = currentRoute();
   if (route?.wardId) {
-    await applyWard(route.wardId);
     // applyWard가 병동을 못 찾으면 병동 선택으로 되돌린다.
-    if (state.wardId) restoreAuth(state.wardId);
-    return;
+    if (await applyWard(route.wardId)) return true;
+    restoreAuth(state.wardId);
+    return false;
   }
 
   if (!state.wardId && !restoreLastWard()) {
-    if (location.pathname !== wardSelectPath()) {
-      setPath(wardSelectPath(), true);
-    }
-    return;
+    return setPath(wardSelectPath(), true);
   }
 
   restoreAuth(state.wardId);
-  setPath(state.token ? wardAppPath(state.wardId) : wardLoginPath(state.wardId), true);
+  return setPath(state.token ? wardAppPath(state.wardId) : wardLoginPath(state.wardId), true);
 }
 
 async function applyWard(wardId) {
-  if (state.wardId === wardId && state.wardLabel) return;
+  if (state.wardId === wardId && state.wardLabel) return false;
   const wards = await api.listWards();
   const ward = wards.find((item) => item.ward_id === wardId);
   if (!ward) {
     resetWard();
-    setPath(wardSelectPath(), true);
-    return;
+    return setPath(wardSelectPath(), true);
   }
   setWard(ward.ward_id, `${ward.hospital_name} - ${ward.ward_name}`);
+  return false;
 }
 
 function currentRoute() {
@@ -92,9 +92,10 @@ function currentRoute() {
 }
 
 // replace=true인 리다이렉트는 잘못된 URL을 바로잡는 용도라 히스토리에 쌓지 않는다.
+// 실제로 경로를 옮겨 navigate를 예약했으면 true.
 function setPath(nextPath, replace = false) {
   if (location.pathname === nextPath) {
-    return;
+    return false;
   }
   if (replace) {
     history.replaceState({}, "", nextPath);
@@ -102,6 +103,7 @@ function setPath(nextPath, replace = false) {
     history.pushState({}, "", nextPath);
   }
   setTimeout(navigate, 0);
+  return true;
 }
 
 window.addEventListener("popstate", navigate);

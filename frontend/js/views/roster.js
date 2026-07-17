@@ -79,20 +79,22 @@ function paint(container) {
     <h2 style="font-size:1.15rem">간호사 명단</h2>
     <p class="caption">행을 드래그해 표시 순서를 바꿀 수 있습니다. 이 순서는 근무표와 HWP 출력에 반영됩니다.</p>
 
-    <div class="nurse-row nurse-header">
-      <span></span>
-      <span>이름</span>
-      <span>연차 구분</span>
-      <span>가능 듀티</span>
-      <span>N 상한</span>
-      <span>N 선호연속</span>
-      <span>연차 목표</span>
-      <span>평일만</span>
-      <span>헬퍼</span>
-      <span>신청 요약</span>
-      <span></span>
+    <div class="roster-scroll">
+      <div class="nurse-row nurse-header">
+        <span></span>
+        <span>이름</span>
+        <span>연차 구분</span>
+        <span>가능 듀티</span>
+        <span>N 상한</span>
+        <span>N 선호연속</span>
+        <span>연차 목표</span>
+        <span>평일만</span>
+        <span>헬퍼</span>
+        <span>신청 요약</span>
+        <span></span>
+      </div>
+      <div id="nurse-rows"></div>
     </div>
-    <div id="nurse-rows"></div>
     <button id="add-nurse-btn">+ 간호사 추가</button>
 
     <h2 style="font-size:1.15rem;margin-top:2rem">보조 인력</h2>

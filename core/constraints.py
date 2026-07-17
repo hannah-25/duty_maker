@@ -20,7 +20,6 @@ MODEL_SHIFTS = (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S, ShiftType.O,
 # 소프트 벌점 가중치 (상대적 우선순위가 중요)
 WEIGHT_TIER3_EXCEPTION = 1000
 WEIGHT_DUTY_REQUEST = 5000
-WEIGHT_OFF_SHORTFALL = 500  # O가 목표 미달 (실행불가 회피용 최후수단)
 WEIGHT_TARGET_STAFFING = 30  # 목표인원(D4/E3) 미달, 1명당
 MONDAY_TARGET_MULTIPLIER = 3  # 월요일 목표 미달 가중 (최우선)
 WEIGHT_N_ISOLATED = 35
@@ -156,7 +155,6 @@ class ScheduleModel:
     def add_tier1_hard_constraints(self):
         self._rule_n_then_2off()
         self._rule_e_then_d_forbidden()
-        self._rule_e_rest_d_forbidden()
         self._rule_max_consecutive_workdays()
         self._rule_max_consecutive_nights()
         self._rule_allowed_shifts()
@@ -165,6 +163,33 @@ class ScheduleModel:
         self._rule_staffing_range()
         self._rule_charge_placement()
         self._rule_charge_minimum()
+
+    def add_fixed_assignments(
+        self,
+        assignments: dict[tuple[str, date], ShiftType],
+        *,
+        require_change_from: dict[tuple[str, date], ShiftType] | None = None,
+    ) -> None:
+        """Freeze cells while keeping all month-wide constraints active.
+
+        In diagnostic mode the frozen cells are grouped under one assumption so
+        an infeasible partial regeneration can report that the selected region
+        is too small, instead of returning an opaque solver status.
+        """
+        lit = self._assumption("fixed_assignments")
+        for key, shift in assignments.items():
+            if key not in self.shift_vars:
+                continue
+            self._enforce(self.model.Add(self.shift_vars[key][shift] == 1), lit)
+
+        if require_change_from:
+            change_terms = [
+                1 - self.shift_vars[key][shift]
+                for key, shift in require_change_from.items()
+                if key in self.shift_vars
+            ]
+            if change_terms:
+                self._enforce(self.model.Add(sum(change_terms) >= 1), lit)
         self._rule_senior_same_shift_cap()
         self._rule_s_eligibility()
         self._rule_weekday_only()
@@ -457,7 +482,7 @@ class ScheduleModel:
                 continue
             target = self.off_target.get(nurse.name, 0)
             o_count = sum(self.val(nurse.name, d, ShiftType.O) for d in self.current_days)
-            self._enforce(self.model.Add(o_count <= target), lit)
+            self._enforce(self.model.Add(o_count == target), lit)
 
     def apply_assumptions(self):
         """(진단 모드 전용) 모든 Tier1 카테고리를 True로 가정 (Infeasible 원인 진단용)."""
@@ -471,7 +496,6 @@ class ScheduleModel:
     def add_tier2_soft_constraints(self, duty_requests: list[DutyRequest] | None = None):
         duty_requests = duty_requests or []
         extra_al_allowance = self._extra_al_allowance(duty_requests)
-        self._soft_off_shortfall()
         self._soft_target_staffing()
         self._soft_avoid_isolated_night()
         self._soft_s_daily_cap()

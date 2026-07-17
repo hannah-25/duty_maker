@@ -194,6 +194,27 @@ class ScheduleAssignmentOut(BaseModel):
     shift: str
 
 
+class ScheduleCellIn(BaseModel):
+    nurse_name: str = Field(min_length=1)
+    date: str
+
+
+class RegeneratePreviewIn(BaseModel):
+    expected_revision: int = Field(ge=0)
+    cells: list[ScheduleCellIn] = Field(min_length=1)
+
+
+class RegenerateApplyIn(BaseModel):
+    preview_id: str = Field(min_length=1)
+
+
+class ManualAssignmentIn(BaseModel):
+    nurse_name: str = Field(min_length=1)
+    date: str
+    shift: str | None = None
+    expected_revision: int = Field(ge=0)
+
+
 class ScheduleRequestOut(BaseModel):
     nurse_name: str
     date: str
@@ -234,6 +255,7 @@ class ScheduleOut(BaseModel):
     month: int
     published: bool
     visible: bool
+    revision: int = 0
     feasible: bool | None = None
     objective_value: float | None = None
     infeasible_categories: list[str] = Field(default_factory=list)
@@ -255,6 +277,7 @@ class ScheduleOut(BaseModel):
     honored_count: int = 0
     unreflected_count: int = 0
     dropped_off_count: int = 0
+    manual_override_cells: list[str] = Field(default_factory=list)
 
 
 class WardSettings(BaseModel):

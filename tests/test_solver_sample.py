@@ -130,13 +130,13 @@ def test_daily_staffing_within_range(solved):
         assert req.E.minimum <= e <= req.E.maximum, f"{day}: E={e}"
 
 
-def test_off_count_never_exceeds_target(solved):
+def test_off_count_matches_target(solved):
     nurses, requirements, off_target, result = solved
     days = month_dates(YEAR, MONTH)
     for nurse in nurses:
         o_count = sum(1 for d in days if result.assignments[(nurse.name, d)] == ShiftType.O)
-        assert o_count <= off_target[nurse.name], (
-            f"{nurse.name}: O {o_count} > 목표 {off_target[nurse.name]}"
+        assert o_count == off_target[nurse.name], (
+            f"{nurse.name}: O {o_count} != 목표 {off_target[nurse.name]}"
         )
 
 

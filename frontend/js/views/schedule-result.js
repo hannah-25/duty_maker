@@ -15,12 +15,24 @@ const CALENDAR_GROUPS = [
   ["N", "night"],
   ["S", "S"],
 ];
+const EDITABLE_SHIFTS = ["D", "E", "N", "O", "연차"];
 
 let current = null;
 let viewMode = "grid"; // "grid" | "calendar" — 세션 동안만 유지
+let scheduleScope = "all"; // "mine" | "all"
+let regionMode = false;
+let regionSelection = null;
+let regenerationPreview = null;
+let editingCell = null;
 
 export async function renderScheduleResult(container) {
   current = await api.getSchedule();
+  viewMode = state.isAdmin ? "grid" : "calendar";
+  scheduleScope = state.isAdmin ? "all" : "mine";
+  regionMode = false;
+  regionSelection = null;
+  regenerationPreview = null;
+  editingCell = null;
   paint(container);
 }
 
@@ -39,12 +51,14 @@ function paint(container) {
       container.querySelector("#generate-schedule-btn"),
       async () => {
         const status = container.querySelector("#schedule-status");
-        status.innerHTML = `<p class="caption">근무표 생성 중...</p>`;
+        const stopProgress = showGenerationProgress(status);
         try {
           current = await api.generateSchedule();
           paint(container);
         } catch (err) {
           status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+        } finally {
+          stopProgress();
         }
       },
       "생성 중...",
@@ -84,6 +98,31 @@ function paint(container) {
   }
 
   paintSchedule(container);
+}
+
+function showGenerationProgress(status) {
+  const steps = [
+    "근무 요청과 제약조건을 확인하고 있어요",
+    "가능한 근무 조합을 계산하고 있어요",
+    "근무 균형과 휴무일을 조정하고 있어요",
+    "최종 근무표를 검증하고 있어요",
+  ];
+  let stepIndex = 0;
+  status.innerHTML = `
+    <div class="generation-progress" role="status" aria-live="polite">
+      <div class="generation-progress__heading">
+        <span class="generation-spinner" aria-hidden="true"></span>
+        <div><strong>근무표 생성 중</strong><p>${steps[stepIndex]}</p></div>
+      </div>
+      <div class="generation-progress__track" aria-hidden="true"><span></span></div>
+      <small>조건에 따라 최대 1분 정도 걸릴 수 있습니다.</small>
+    </div>`;
+  const message = status.querySelector(".generation-progress p");
+  const timer = window.setInterval(() => {
+    stepIndex = (stepIndex + 1) % steps.length;
+    message.textContent = steps[stepIndex];
+  }, 4000);
+  return () => window.clearInterval(timer);
 }
 
 function adminControls() {
@@ -150,10 +189,12 @@ function paintSchedule(container) {
 
   body.innerHTML = `
     ${summaryBlock()}
-    <div class="view-toggle">
+    ${scopeToggleBlock()}
+    <div class="view-toggle ${state.isAdmin ? "" : "member-view-toggle"}">
       <button data-view="grid" class="${viewMode === "grid" ? "active" : ""}">표 보기</button>
       <button data-view="calendar" class="${viewMode === "calendar" ? "active" : ""}">달력 보기</button>
     </div>
+    ${regionControlsHTML()}
     <div id="schedule-view"></div>
     <p class="caption">파란 글자는 반영된 듀티 신청, ★는 차지, 회색은 주말·공휴일입니다.</p>
     ${checklistBlock()}
@@ -162,18 +203,282 @@ function paintSchedule(container) {
 
   const view = body.querySelector("#schedule-view");
   const renderView = () => {
-    view.innerHTML = viewMode === "calendar" ? calendarViewHTML(ctx) : gridViewHTML(ctx);
+    const visibleContext = scopedContext(ctx);
+    view.innerHTML = viewMode === "calendar" ? calendarViewHTML(visibleContext) : gridViewHTML(visibleContext);
+    bindRegionSelection(body, view, visibleContext, renderView);
+    bindScheduleAssignmentEditing(body, view, renderView);
   };
+  const scopeButton = body.querySelector("#schedule-scope-toggle");
+  if (scopeButton) {
+    scopeButton.addEventListener("click", () => {
+      scheduleScope = scheduleScope === "mine" ? "all" : "mine";
+      body.querySelector(".schedule-scope-controls strong").textContent =
+        scheduleScope === "mine" ? "내 근무" : "전체 근무표";
+      scopeButton.textContent = scheduleScope === "mine" ? "전체 근무표 보기" : "내 근무만 보기";
+      scopeButton.setAttribute("aria-pressed", String(scheduleScope === "all"));
+      renderView();
+    });
+  }
   for (const btn of body.querySelectorAll(".view-toggle button")) {
     btn.addEventListener("click", () => {
       if (viewMode === btn.dataset.view) return;
       viewMode = btn.dataset.view;
+      if (viewMode !== "grid") clearRegionState();
       for (const b of body.querySelectorAll(".view-toggle button")) b.classList.remove("active");
       btn.classList.add("active");
       renderView();
     });
   }
   renderView();
+}
+
+function supportsRegionSelection() {
+  // 터치 기능이 있는 노트북은 primary pointer가 coarse로 보고되어도 마우스 드래그를
+  // 지원한다. 화면 폭만 제한해 작은 모바일 표와의 충돌만 피한다.
+  return state.isAdmin && window.matchMedia("(min-width: 761px)").matches;
+}
+
+function regionControlsHTML() {
+  if (!state.isAdmin) return "";
+  return `
+    <section class="schedule-region-tools" id="schedule-region-tools" aria-label="근무표 영역 다시 생성">
+      <button type="button" id="region-mode-btn" aria-pressed="false">영역 다시 생성</button>
+      <span class="caption" id="region-selection-status">버튼을 누른 뒤 근무 셀을 드래그하세요.</span>
+      <button type="button" id="region-clear-btn" hidden>선택 해제</button>
+      <button type="button" class="primary inline-primary" id="region-preview-btn" hidden>선택 영역 미리보기</button>
+      <button type="button" id="region-cancel-btn" hidden>미리보기 취소</button>
+      <button type="button" class="primary inline-primary" id="region-apply-btn" hidden>적용</button>
+    </section>`;
+}
+
+function clearRegionState() {
+  regionMode = false;
+  regionSelection = null;
+  regenerationPreview = null;
+  editingCell = null;
+}
+
+function selectedCells(ctx) {
+  if (!regionSelection) return [];
+  const cells = [];
+  for (let row = regionSelection.rowStart; row <= regionSelection.rowEnd; row += 1) {
+    for (let col = regionSelection.colStart; col <= regionSelection.colEnd; col += 1) {
+      cells.push({ nurse_name: ctx.names[row], date: ctx.dates[col] });
+    }
+  }
+  return cells;
+}
+
+function previewAssignments() {
+  const candidate = regenerationPreview?.schedule ?? regenerationPreview?.candidate ?? regenerationPreview;
+  const assignments = candidate?.assignments ?? regenerationPreview?.assignments ?? [];
+  return new Map(assignments.map((item) => [`${item.nurse_name}|${item.date}`, item.shift]));
+}
+
+function bindRegionSelection(body, view, ctx, renderView) {
+  const tools = body.querySelector("#schedule-region-tools");
+  if (!tools) return;
+  const supported = supportsRegionSelection();
+  tools.classList.toggle("is-supported", supported);
+  if (!supported || viewMode !== "grid") return;
+
+  const modeButton = tools.querySelector("#region-mode-btn");
+  const clearButton = tools.querySelector("#region-clear-btn");
+  const previewButton = tools.querySelector("#region-preview-btn");
+  const cancelButton = tools.querySelector("#region-cancel-btn");
+  const applyButton = tools.querySelector("#region-apply-btn");
+  const status = tools.querySelector("#region-selection-status");
+  const cells = selectedCells(ctx);
+  modeButton.setAttribute("aria-pressed", String(regionMode));
+  modeButton.classList.toggle("active", regionMode);
+  clearButton.hidden = !regionSelection;
+  previewButton.hidden = !regionSelection || Boolean(regenerationPreview);
+  cancelButton.hidden = !regenerationPreview;
+  applyButton.hidden = !regenerationPreview;
+  if (regenerationPreview) {
+    const changed = regenerationPreview.changed_count ?? regenerationPreview.changed_cells?.length ?? previewAssignments().size;
+    status.textContent = `선택 ${cells.length}개 · 변경 ${changed}개를 미리 보는 중입니다.`;
+  } else if (regionSelection) {
+    status.textContent = `직원 ${regionSelection.rowEnd - regionSelection.rowStart + 1}명 · 날짜 ${regionSelection.colEnd - regionSelection.colStart + 1}일 · 셀 ${cells.length}개`;
+  } else {
+    status.textContent = regionMode ? "근무 셀을 드래그해 직사각형 영역을 선택하세요." : "버튼을 누른 뒤 근무 셀을 드래그하세요.";
+  }
+
+  modeButton.onclick = () => {
+    regionMode = !regionMode;
+    if (!regionMode) regionSelection = null;
+    regenerationPreview = null;
+    renderView();
+  };
+  clearButton.onclick = () => {
+    regionSelection = null;
+    regenerationPreview = null;
+    renderView();
+  };
+
+  let anchor = null;
+  let activePointerId = null;
+  const selectTo = (cell) => {
+    const row = Number(cell.dataset.regionRow);
+    const col = Number(cell.dataset.regionCol);
+    regionSelection = {
+      rowStart: Math.min(anchor.row, row), rowEnd: Math.max(anchor.row, row),
+      colStart: Math.min(anchor.col, col), colEnd: Math.max(anchor.col, col),
+    };
+    view.querySelectorAll("[data-region-row]").forEach((item) => {
+      const r = Number(item.dataset.regionRow);
+      const c = Number(item.dataset.regionCol);
+      item.classList.toggle("region-selected", r >= regionSelection.rowStart && r <= regionSelection.rowEnd && c >= regionSelection.colStart && c <= regionSelection.colEnd);
+    });
+  };
+  view.querySelectorAll("[data-region-row]").forEach((cell) => {
+    cell.addEventListener("pointerdown", (event) => {
+      if (!regionMode || regenerationPreview || event.button !== 0) return;
+      event.preventDefault();
+      anchor = { row: Number(cell.dataset.regionRow), col: Number(cell.dataset.regionCol) };
+      activePointerId = event.pointerId;
+      cell.setPointerCapture(event.pointerId);
+      selectTo(cell);
+    });
+  });
+  const finishSelection = () => {
+    if (!anchor) return;
+    anchor = null;
+    activePointerId = null;
+    renderView();
+  };
+  view.addEventListener("pointermove", (event) => {
+    if (!anchor || event.pointerId !== activePointerId || event.buttons !== 1) return;
+    const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-region-row]");
+    if (cell && view.contains(cell)) selectTo(cell);
+  });
+  view.addEventListener("pointerup", finishSelection);
+  view.addEventListener("pointercancel", finishSelection);
+
+  previewButton.onclick = async () => {
+    previewButton.disabled = true;
+    status.textContent = "선택 영역을 다시 계산하고 있습니다…";
+    try {
+      regenerationPreview = await api.previewScheduleRegeneration({
+        expected_revision: current.revision ?? current.schedule_revision,
+        cells: selectedCells(ctx),
+      });
+      renderView();
+    } catch (err) {
+      body.closest("main")?.querySelector("#schedule-status")?.replaceChildren(errorBanner(err.message));
+      status.textContent = "미리보기를 만들지 못했습니다.";
+      status.textContent = `미리보기 실패: ${err.message}`;
+      previewButton.disabled = false;
+    }
+  };
+  cancelButton.onclick = async () => {
+    cancelButton.disabled = true;
+    try {
+      if (regenerationPreview?.preview_id) await api.cancelScheduleRegeneration(regenerationPreview.preview_id);
+    } catch (err) {
+      body.closest("main")?.querySelector("#schedule-status")?.replaceChildren(errorBanner(err.message));
+    } finally {
+      regenerationPreview = null;
+      renderView();
+    }
+  };
+  applyButton.onclick = async () => {
+    applyButton.disabled = true;
+    try {
+      current = await api.applyScheduleRegeneration(regenerationPreview.preview_id);
+      clearRegionState();
+      paint(body.closest("main") ?? body.parentElement);
+    } catch (err) {
+      body.closest("main")?.querySelector("#schedule-status")?.replaceChildren(errorBanner(err.message));
+      applyButton.disabled = false;
+    }
+  };
+}
+
+function isManualOverride(name, date) {
+  const key = `${name}|${date}`;
+  const persistedCells = current.manual_override_cells;
+  if (Array.isArray(persistedCells)) return persistedCells.includes(key);
+
+  // 이전 응답 형태도 수용해 화면 전환 중 핀 표시가 사라지지 않게 한다.
+  const overrides = current.manual_overrides ?? [];
+  if (Array.isArray(overrides)) {
+    return overrides.some((item) =>
+      item === key || (item?.nurse_name === name && item?.date === date)
+    );
+  }
+  return Boolean(overrides[key]);
+}
+
+function bindScheduleAssignmentEditing(body, view, renderView) {
+  if (!state.isAdmin || viewMode !== "grid" || current.feasible !== true) return;
+
+  for (const button of view.querySelectorAll("[data-duty-editor-toggle]")) {
+    button.addEventListener("pointerdown", (event) => {
+      // 일반 모드의 클릭은 영역 선택 핸들러까지 전달하지 않는다.
+      if (!regionMode) event.stopPropagation();
+    });
+    button.addEventListener("click", (event) => {
+      if (regionMode || regenerationPreview) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const next = { nurse_name: button.dataset.nurse, date: button.dataset.date };
+      editingCell = editingCell?.nurse_name === next.nurse_name && editingCell?.date === next.date ? null : next;
+      renderView();
+    });
+  }
+
+  for (const button of view.querySelectorAll("[data-assignment-shift]")) {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const nurse_name = button.dataset.nurse;
+      const date = button.dataset.date;
+      const shift = button.dataset.assignmentShift || null;
+      view.querySelectorAll("[data-assignment-shift]").forEach((item) => { item.disabled = true; });
+      try {
+        current = await api.updateScheduleAssignment({
+          nurse_name,
+          date,
+          shift,
+          expected_revision: current.revision ?? current.schedule_revision,
+        });
+        editingCell = null;
+        regionSelection = null;
+        regenerationPreview = null;
+        paint(body.closest("main") ?? body.parentElement);
+      } catch (err) {
+        body.closest("main")?.querySelector("#schedule-status")?.replaceChildren(errorBanner(err.message));
+        view.querySelectorAll("[data-assignment-shift]").forEach((item) => { item.disabled = false; });
+      }
+    });
+  }
+}
+
+function errorBanner(message) {
+  const banner = document.createElement("div");
+  banner.className = "error-banner";
+  banner.textContent = message;
+  return banner;
+}
+
+function scopeToggleBlock() {
+  if (state.isAdmin) return "";
+  return `
+    <div class="schedule-scope-controls">
+      <strong>${scheduleScope === "mine" ? "내 근무" : "전체 근무표"}</strong>
+      <button id="schedule-scope-toggle" aria-pressed="${scheduleScope === "all"}">
+        ${scheduleScope === "mine" ? "전체 근무표 보기" : "내 근무만 보기"}
+      </button>
+    </div>
+  `;
+}
+
+function scopedContext(ctx) {
+  if (state.isAdmin || scheduleScope === "all") return ctx;
+  return { ...ctx, names: ctx.names.filter((name) => name === state.name) };
 }
 
 function buildContext() {
@@ -195,10 +500,11 @@ function buildContext() {
 }
 
 function gridViewHTML({ dates, holidays, highlights, charges, byNurse, names, helpers }) {
-  const nurseRows = names.map((name) =>
-    tableRow(name, dates, holidays, highlights, charges, helpers, (date) => byNurse.get(name)?.get(date), true)
+  const candidate = previewAssignments();
+  const nurseRows = names.map((name, rowIndex) =>
+    tableRow(name, dates, holidays, highlights, charges, helpers, (date) => byNurse.get(name)?.get(date), true, rowIndex, candidate)
   );
-  const assistantRows = current.assistant_rows.map((row) =>
+  const assistantRows = (scheduleScope === "mine" && !state.isAdmin ? [] : current.assistant_rows).map((row) =>
     tableRow(row.name, dates, holidays, highlights, charges, helpers, (date) => row.marks[date], false)
   );
   // 보조 인력은 간호사와 시각적으로 구분되게 빈 행 2줄을 둔다.
@@ -247,6 +553,7 @@ function gridViewHTML({ dates, holidays, highlights, charges, byNurse, names, he
 }
 
 function calendarViewHTML({ dates, holidays, charges, byNurse, names, helpers }) {
+  if (!state.isAdmin) return monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names, helpers });
   // 날짜 열 × 근무 그룹(day/eve/night/S) 행. 각 칸에 명단 순서로 이름 나열, 차지는 ★.
   const cellNames = (date, shift) =>
     names
@@ -292,11 +599,53 @@ function calendarViewHTML({ dates, holidays, charges, byNurse, names, helpers })
   `;
 }
 
-function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, showCounts) {
+function monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names, helpers }) {
+  const leading = new Date(`${dates[0]}T00:00:00`).getDay();
+  const slots = [...Array(leading).fill(""), ...dates];
+  while (slots.length % 7) slots.push("");
+
+  const dutyItems = (date) => {
+    if (scheduleScope === "mine") {
+      const shift = byNurse.get(state.name)?.get(date) ?? "";
+      if (!shift) return "";
+      const charge = charges.has(`${state.name}|${date}`) ? '<span class="charge-star">★</span>' : "";
+      return `<strong class="member-duty-shift shift-${escapeHtml(shift)}">${escapeHtml(shift)}${charge}</strong>`;
+    }
+    return CALENDAR_GROUPS.map(([shift, label]) => {
+      const dutyNames = names.filter((name) => byNurse.get(name)?.get(date) === shift);
+      if (!dutyNames.length) return "";
+      const visibleNames = dutyNames.slice(0, 2);
+      const remaining = dutyNames.length - visibleNames.length;
+      const visibleMarkup = visibleNames.map((name) => {
+        const charge = charges.has(`${name}|${date}`) ? '<span class="charge-star">★</span>' : "";
+        const helper = helpers.has(name) ? '<span class="helper-tag">헬퍼</span>' : "";
+        return `${escapeHtml(name)}${charge}${helper}`;
+      }).join(", ");
+      if (!remaining) return `<div class="member-duty-group"><strong>${escapeHtml(label)}</strong><span>${visibleMarkup}</span></div>`;
+      return `<details class="member-duty-group"><summary><strong>${escapeHtml(label)}</strong><span>${visibleMarkup}<em> 외 ${remaining}명</em></span></summary><div class="member-duty-expanded">${escapeHtml(dutyNames.join(", "))}</div></details>`;
+    }).join("");
+  };
+
+  return `
+    <div class="member-month-calendar is-${scheduleScope}" aria-label="${current.month}월 근무 달력">
+      <div class="member-month-weekdays" aria-hidden="true">
+        ${WEEKDAY_KR.map((day) => `<span>${day}</span>`).join("")}
+      </div>
+      <div class="member-month-days">
+        ${slots.map((date) => date ? `
+          <div class="member-month-day ${isHoliday(date, holidays) ? "is-holiday" : ""}">
+            <span class="member-month-day-number">${Number(date.slice(-2))}</span>
+            <div class="member-month-day-duty">${dutyItems(date)}</div>
+          </div>` : '<span class="member-month-day is-empty"></span>').join("")}
+      </div>
+    </div>`;
+}
+
+function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, showCounts, regionRow = null, candidate = new Map()) {
   const isHelper = helpers.has(name);
   const counts = { D: 0, E: 0, N: 0, O: 0, 연차: 0 };
   const cells = dates
-    .map((date) => {
+    .map((date, colIndex) => {
       let shift = shiftAt(date) ?? "";
       // 헬퍼는 비근무일(O)을 빈칸으로 표시한다.
       if (isHelper && (shift === "O" || shift === "연차")) shift = "";
@@ -307,7 +656,27 @@ function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, 
       if (highlights.has(`${name}|${date}`)) classes.push("request-hit");
       // 표 보기에서는 차지에 굵기만 주고 별표는 생략(달력뷰에만 표시).
       if (charges.has(`${name}|${date}`)) classes.push("charge-cell");
-      return `<td class="${classes.join(" ")}">${escapeHtml(shift)}</td>`;
+      const key = `${name}|${date}`;
+      const manualOverride = isManualOverride(name, date);
+      if (manualOverride) classes.push("manual-override");
+      const nextShift = candidate.get(key);
+      const changed = nextShift != null && nextShift !== shift;
+      if (changed) classes.push("region-preview-changed");
+      const selected = regionSelection && regionRow != null && regionRow >= regionSelection.rowStart && regionRow <= regionSelection.rowEnd && colIndex >= regionSelection.colStart && colIndex <= regionSelection.colEnd;
+      if (selected) classes.push("region-selected");
+      const attrs = regionRow == null ? "" : ` data-region-row="${regionRow}" data-region-col="${colIndex}" data-nurse="${escapeHtml(name)}" data-date="${date}"`;
+      const content = changed ? `<span class="region-old-shift">${escapeHtml(shift)}</span><strong>${escapeHtml(nextShift)}</strong>` : escapeHtml(shift);
+      const isEditing = editingCell?.nurse_name === name && editingCell?.date === date;
+      const editor = isEditing ? `
+        <div class="schedule-duty-editor" role="group" aria-label="${escapeHtml(name)} ${date} 근무 변경">
+          ${EDITABLE_SHIFTS.map((value) => `<button type="button" data-assignment-shift="${escapeHtml(value)}" data-nurse="${escapeHtml(name)}" data-date="${date}" ${value === shift ? "disabled" : ""}>${escapeHtml(value)}</button>`).join("")}
+          ${manualOverride ? `<button type="button" class="schedule-duty-reset" data-assignment-shift="" data-nurse="${escapeHtml(name)}" data-date="${date}">수동 고정 해제</button>` : ""}
+        </div>` : "";
+      const display = regionRow == null ? content : `
+        <button type="button" class="schedule-duty-cell-button" data-duty-editor-toggle data-nurse="${escapeHtml(name)}" data-date="${date}" aria-expanded="${isEditing}" aria-label="${escapeHtml(name)} ${date} 근무 ${escapeHtml(shift)} 변경">
+          ${content}${manualOverride ? '<span class="manual-override-pin" aria-label="수동 고정">📌</span>' : ""}
+        </button>${editor}`;
+      return `<td class="${classes.join(" ")}"${attrs}>${display}</td>`;
     })
     .join("");
   const statCells = STAT_COLUMNS.map(

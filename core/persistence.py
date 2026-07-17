@@ -49,6 +49,8 @@ _PLAIN_KEYS = (
     "requests_locked",
     "result_published",
     "constraint_settings",
+    "schedule_revision",
+    "manual_overrides",
 )
 
 
@@ -166,6 +168,12 @@ def serialize_state(ss) -> dict:
         payload["weekend_template"] = _template_to_list(ss["weekend_template"])
     result = ss.get("schedule_result")
     payload["schedule_result"] = _result_to_dict(result) if result is not None else None
+    previews = {}
+    for preview_id, preview in ss.get("schedule_previews", {}).items():
+        row = {k: v for k, v in preview.items() if k != "result"}
+        row["result"] = _result_to_dict(preview["result"])
+        previews[preview_id] = row
+    payload["schedule_previews"] = previews
     return payload
 
 
@@ -186,6 +194,11 @@ def apply_state(ss, payload: dict) -> None:
         ss["weekend_template"] = _template_from_list(payload["weekend_template"])
     if payload.get("schedule_result"):
         ss["schedule_result"] = _result_from_dict(payload["schedule_result"])
+    ss["schedule_previews"] = {
+        preview_id: {**row, "result": _result_from_dict(row["result"])}
+        for preview_id, row in payload.get("schedule_previews", {}).items()
+        if row.get("result")
+    }
 
 
 # ---------------------------------------------------------------- backend --

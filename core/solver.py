@@ -29,6 +29,8 @@ def generate_schedule(
     duty_requests: Optional[list[DutyRequest]] = None,
     time_limit_seconds: float = 30.0,
     settings: dict | None = None,
+    fixed_assignments: Optional[dict[tuple[str, date], ShiftType]] = None,
+    require_change_from: Optional[dict[tuple[str, date], ShiftType]] = None,
 ) -> ScheduleResult:
     """한 달치 근무표를 생성한다.
 
@@ -58,6 +60,7 @@ def generate_schedule(
         use_assumptions=False, settings=merged_settings,
     )
     sm.add_tier1_hard_constraints()
+    sm.add_fixed_assignments(fixed_assignments or {}, require_change_from=require_change_from)
     sm.add_tier2_soft_constraints(active_duty_requests)
     sm.add_duty_requests(active_duty_requests)
     sm.add_tier3_exceptions(exceptions)
@@ -78,6 +81,9 @@ def generate_schedule(
             use_assumptions=True, settings=merged_settings,
         )
         diag_sm.add_tier1_hard_constraints()
+        diag_sm.add_fixed_assignments(
+            fixed_assignments or {}, require_change_from=require_change_from
+        )
         diag_sm.apply_assumptions()
         diag_solver = cp_model.CpSolver()
         diag_solver.parameters.max_time_in_seconds = min(time_limit_seconds, 30.0)

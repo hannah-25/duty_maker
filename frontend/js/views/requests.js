@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { onClickBusy } from "../ui.js";
 
 const SHIFT_LABELS = {
   O: "오프",
@@ -26,6 +27,7 @@ let editor = {
   isDragging: false,
   mode: "prefer",
   otherReason: "예비군",
+  mobileName: "",
 };
 
 export async function renderRequests(container) {
@@ -39,18 +41,20 @@ export async function renderRequests(container) {
     isDragging: false,
     mode: "prefer",
     otherReason: "예비군",
+    mobileName: visibleNames()[0] ?? "",
   };
   paint(container);
 }
 
 function paint(container) {
+  document.body.classList.remove("has-request-sheet");
   container.innerHTML = `
     <h2 style="font-size:1.15rem">근무 신청</h2>
     <p class="caption">${current.year}년 ${current.month}월 신청을 관리합니다.</p>
 
     ${current.is_admin ? adminLockBlock() : lockNotice()}
 
-    <section class="request-editor" aria-label="근무 신청 빠른 입력">
+    <section class="request-editor ${current.is_admin ? "is-admin" : "is-member"}" aria-label="근무 신청 빠른 입력">
       <div class="request-editor-top">
         <div class="request-mode-group" role="group" aria-label="신청 유형">
           ${modeButton("prefer", "희망")}
@@ -69,15 +73,24 @@ function paint(container) {
 
       <div class="request-guide-bar">
         <strong>현재: ${KIND_LABELS[editor.mode]}</strong>
-        <span>이름-날짜 셀 클릭/드래그</span>
-        <span><kbd>D</kbd><kbd>E</kbd><kbd>N</kbd><kbd>O</kbd> 입력</span>
-        <span>방향키 이동</span>
-        <span>Shift+방향키 범위</span>
-        <span>Esc 해제</span>
+        <span class="guide-keyboard">이름-날짜 셀 클릭/드래그</span>
+        <span class="guide-keyboard"><kbd>D</kbd><kbd>E</kbd><kbd>N</kbd><kbd>O</kbd> 입력</span>
+        <span class="guide-keyboard">방향키 이동</span>
+        <span class="guide-keyboard">Shift+방향키 범위</span>
+        <span class="guide-keyboard">Esc 해제</span>
+        <span class="guide-touch">날짜를 누르고 근무를 선택하세요</span>
         <button id="request-help-btn" type="button">도움말</button>
       </div>
 
+      <div class="request-shift-bar" role="group" aria-label="근무 입력">
+        ${shiftButton("D", "D")}
+        ${shiftButton("E", "E")}
+        ${shiftButton("N", "N")}
+        ${shiftButton("O", "오프")}
+      </div>
+
       <div id="request-editor-status" class="request-editor-status" aria-live="polite"></div>
+      ${mobileCalendar()}
       <div class="schedule-scroll">
         <table class="request-grid" aria-label="${current.month}월 근무 신청 표">
           <thead>
@@ -89,6 +102,8 @@ function paint(container) {
           <tbody>${requestGridRows()}</tbody>
         </table>
       </div>
+
+      ${mobileShiftSheet()}
 
       <div class="request-actions">
         <button id="request-clear-selection" type="button">선택 해제</button>
@@ -131,6 +146,27 @@ function bindEditor(container) {
     });
   }
 
+  container.querySelector("#request-mobile-name")?.addEventListener("change", (event) => {
+    editor.mobileName = event.target.value;
+    const key = cellKey(editor.mobileName, monthDateStrings()[0] ?? firstDay());
+    editor.focusedKey = key;
+    editor.anchorKey = key;
+    editor.selectedKeys = new Set([key]);
+    repaint(container);
+  });
+
+  // 폰에서는 더블탭이 흔하다. applyShift가 끝나기 전 두 번째 탭이 들어오면
+  // 같은 셀에 중복 요청이 나간다.
+  for (const button of container.querySelectorAll("[data-apply-shift]")) {
+    onClickBusy(button, () => applyShift(container, button.dataset.applyShift));
+  }
+
+  for (const day of container.querySelectorAll("[data-mobile-cell-key]")) bindMobileDay(container, day);
+
+  for (const closeButton of container.querySelectorAll("[data-sheet-close]")) {
+    closeButton.addEventListener("click", () => closeMobileSheet(container));
+  }
+
   container.querySelector("#request-help-btn").addEventListener("click", () => {
     container.querySelector("#request-help").classList.toggle("is-hidden");
   });
@@ -138,7 +174,7 @@ function bindEditor(container) {
     clearSelection();
     repaint(container);
   });
-  container.querySelector("#request-delete-selection").addEventListener("click", () => deleteSelectedRequests(container));
+  onClickBusy(container.querySelector("#request-delete-selection"), () => deleteSelectedRequests(container));
 
   for (const cell of container.querySelectorAll("[data-cell-key]")) {
     cell.addEventListener("mousedown", (e) => {
@@ -176,6 +212,10 @@ function handleKeydown(e, container) {
   }
   if (e.key === "Escape") {
     e.preventDefault();
+    if (container.querySelector(".request-sheet.is-open")) {
+      closeMobileSheet(container);
+      return;
+    }
     clearSelection();
     repaint(container);
     return;
@@ -207,7 +247,9 @@ async function applyShift(container, shift) {
   status.textContent = `${cells.length}개 셀에 ${shift} ${KIND_LABELS[editor.mode]} 적용 중...`;
   try {
     for (const cell of cells) {
-      const replacing = current.requests.filter((item) => sameRequestBucket(item, cell.name, cell.date));
+      const replacing = current.requests.filter(
+        (item) => sameRequestBucket(item, cell.name, cell.date) || isOppositeRequest(item, cell.name, cell.date)
+      );
       for (const item of replacing) current = await api.deleteRequest(item.id);
       current = await api.addRequest({
         nurse_name: current.is_admin ? cell.name : null,
@@ -253,6 +295,12 @@ function sameRequestBucket(item, name, date) {
   return item.kind === "prefer" && !item.memo;
 }
 
+function isOppositeRequest(item, name, date) {
+  if (item.nurse_name !== name || item.date !== date) return false;
+  const nextKind = editor.mode === "avoid" ? "avoid" : "prefer";
+  return item.kind !== nextKind;
+}
+
 function requestGridRows() {
   const dates = monthDateStrings();
   return visibleNames()
@@ -265,6 +313,217 @@ function requestGridRows() {
       `
     )
     .join("");
+}
+
+function mobileCalendar() {
+  const name = current.is_admin ? (editor.mobileName || visibleNames()[0] || "") : (visibleNames()[0] ?? "");
+  const dates = monthDateStrings();
+  const leading = new Date(`${dates[0]}T00:00:00`).getDay();
+  const slots = [...Array(leading).fill(""), ...dates];
+  while (slots.length % 7) slots.push("");
+
+  return `
+    ${current.is_admin ? `
+      <label class="request-mobile-name">
+        간호사
+        <select id="request-mobile-name">
+          ${visibleNames().map((item) => `<option value="${escapeAttr(item)}" ${item === name ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+        </select>
+      </label>
+    ` : ""}
+    <div class="request-mobile-calendar" aria-label="${current.month}월 근무 신청 달력">
+      <div class="request-mobile-weekdays" aria-hidden="true">
+        ${["일", "월", "화", "수", "목", "금", "토"].map((day) => `<span>${day}</span>`).join("")}
+      </div>
+      <div class="request-mobile-days">
+        ${slots.map((date) => (date ? mobileCalendarDay(name, date) : `<span class="request-mobile-day is-empty"></span>`)).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function mobileCalendarDay(name, date) {
+  const key = cellKey(name, date);
+  const requests = requestsForCell(name, date);
+  const selected = editor.selectedKeys.has(key);
+  return `
+    <button
+      type="button"
+      class="request-mobile-day ${isWeekend(date) ? "is-weekend" : ""} ${selected ? "is-selected" : ""}"
+      data-mobile-cell-key="${escapeAttr(key)}"
+      aria-label="${formatDate(date)}${requests.length ? `, 신청 ${requests.length}건` : ""}"
+      ${isInputDisabled() ? "disabled" : ""}
+    >
+      <span class="request-mobile-day-number">${Number(date.slice(-2))}</span>
+      <span class="request-mobile-day-items">${requests.map((item) => mobileRequestBadge(item)).join("")}</span>
+    </button>
+  `;
+}
+
+function mobileShiftSheet() {
+  return `
+    <div class="request-sheet" aria-hidden="true">
+      <button class="request-sheet-backdrop" type="button" data-sheet-close aria-label="닫기"></button>
+      <section class="request-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="request-sheet-title">
+        <div class="request-sheet-handle" aria-hidden="true"></div>
+        <div class="request-sheet-heading">
+          <div>
+            <strong id="request-sheet-title">근무 신청</strong>
+            <span id="request-sheet-date"></span>
+          </div>
+          <button type="button" data-sheet-close aria-label="닫기">×</button>
+        </div>
+        <div id="request-sheet-content"></div>
+      </section>
+    </div>
+  `;
+}
+
+function mobileRequestBadge(item) {
+  const kind = requestKind(item);
+  const shift = SHIFT_LABELS[item.requested_shift] ?? item.requested_shift;
+  const label = kind === "avoid" ? `제외 ${shift}` : kind === "other" ? `${shift} 기타` : shift;
+  return `<strong class="request-mobile-shift is-${kind}">${escapeHtml(label)}</strong>`;
+}
+
+function openMobileSheet(container) {
+  const sheet = container.querySelector(".request-sheet");
+  if (!sheet) return;
+  const cell = selectedCells()[0];
+  sheet.querySelector("#request-sheet-date").textContent = cell ? `${formatDate(cell.date)} (${dayLabel(cell.date).split("(")[1]}` : "";
+  renderMobileSheetContent(container);
+  sheet.classList.add("is-open");
+  sheet.setAttribute("aria-hidden", "false");
+  document.body.classList.add("has-request-sheet");
+  sheet.querySelector("[data-apply-shift]")?.focus();
+}
+
+function renderMobileSheetContent(container) {
+  const sheet = container.querySelector(".request-sheet");
+  const content = sheet?.querySelector("#request-sheet-content");
+  const cell = selectedCells()[0];
+  if (!sheet || !content || !cell) return;
+  const requests = requestsForCell(cell.name, cell.date);
+  sheet.classList.remove("is-prefer", "is-avoid", "is-other");
+  sheet.classList.add(`is-${editor.mode}`);
+  sheet.querySelector("#request-sheet-title").textContent = `${KIND_LABELS[editor.mode]} 신청`;
+  content.innerHTML = `
+    ${requests.length ? `
+      <div class="request-sheet-current">
+        <div class="request-sheet-section-label">선택된 근무</div>
+        ${requests.map((item) => mobileCurrentRequest(item)).join("")}
+      </div>
+    ` : ""}
+    <div class="request-sheet-section-label">신청 유형</div>
+    <div class="request-sheet-modes" role="group" aria-label="신청 유형">
+      ${modeButton("prefer", "희망")}${modeButton("avoid", "제외")}${modeButton("other", "기타")}
+    </div>
+    <div class="request-sheet-section-label">근무 선택</div>
+    <div class="request-sheet-shifts" role="group" aria-label="근무 입력">
+      ${shiftButton("D", "D")}${shiftButton("E", "E")}${shiftButton("N", "N")}${shiftButton("O", "오프")}
+    </div>
+  `;
+
+  for (const button of content.querySelectorAll("[data-request-mode]")) {
+    button.addEventListener("click", () => {
+      editor.mode = button.dataset.requestMode;
+      renderMobileSheetContent(container);
+    });
+  }
+  for (const button of content.querySelectorAll("[data-apply-shift]")) {
+    onClickBusy(button, () => applyShift(container, button.dataset.applyShift));
+  }
+  for (const button of content.querySelectorAll("[data-delete-current]")) {
+    onClickBusy(button, () => deleteMobileRequest(container, button.dataset.deleteCurrent), "삭제 중...");
+  }
+}
+
+function mobileCurrentRequest(item) {
+  const kind = requestKind(item);
+  const shift = SHIFT_LABELS[item.requested_shift] ?? item.requested_shift;
+  const label = kind === "other" ? item.memo : KIND_LABELS[kind];
+  return `
+    <div class="request-sheet-current-item is-${kind}">
+      <span><strong>${escapeHtml(shift)}</strong><small>${escapeHtml(label)}</small></span>
+      <button type="button" data-delete-current="${escapeAttr(item.id)}" aria-label="${escapeAttr(shift)} ${escapeAttr(label)} 신청 삭제">삭제</button>
+    </div>
+  `;
+}
+
+async function deleteMobileRequest(container, requestId) {
+  if (!confirm("선택한 근무 신청을 삭제하시겠습니까?")) return;
+  try {
+    current = await api.deleteRequest(requestId);
+    const message = "근무 신청을 삭제했습니다.";
+    paint(container);
+    container.querySelector("#requests-status").textContent = message;
+  } catch (err) {
+    container.querySelector("#requests-status").textContent = `오류: ${err.message}`;
+  }
+}
+
+function bindMobileDay(container, day) {
+  let timer = 0;
+  let longPressed = false;
+  const open = () => {
+    startSelection(day.dataset.mobileCellKey);
+    stopDragging();
+    openMobileSheet(container);
+  };
+  day.addEventListener("pointerdown", () => {
+    longPressed = false;
+    timer = window.setTimeout(() => {
+      longPressed = true;
+      navigator.vibrate?.(20);
+      deleteMobileDateRequests(container, day.dataset.mobileCellKey);
+    }, 550);
+  });
+  const cancel = () => window.clearTimeout(timer);
+  day.addEventListener("pointerup", cancel);
+  day.addEventListener("pointercancel", cancel);
+  day.addEventListener("pointerleave", cancel);
+  day.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    cancel();
+    longPressed = true;
+    deleteMobileDateRequests(container, day.dataset.mobileCellKey);
+  });
+  day.addEventListener("click", () => {
+    if (longPressed) {
+      longPressed = false;
+      return;
+    }
+    open();
+  });
+}
+
+async function deleteMobileDateRequests(container, key) {
+  if (isInputDisabled()) return;
+  const { name, date } = parseCellKey(key);
+  const targets = requestsForCell(name, date);
+  if (!targets.length) {
+    startSelection(key);
+    stopDragging();
+    openMobileSheet(container);
+    return;
+  }
+  if (!confirm(`${formatDate(date)} 신청 ${targets.length}건을 모두 삭제하시겠습니까?`)) return;
+  try {
+    for (const item of targets) current = await api.deleteRequest(item.id);
+    const message = `${formatDate(date)} 신청 ${targets.length}건을 삭제했습니다.`;
+    paint(container);
+    container.querySelector("#requests-status").textContent = message;
+  } catch (err) {
+    container.querySelector("#requests-status").textContent = `오류: ${err.message}`;
+  }
+}
+
+function closeMobileSheet(container) {
+  const sheet = container.querySelector(".request-sheet");
+  if (!sheet) return;
+  sheet.classList.remove("is-open");
+  sheet.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("has-request-sheet");
 }
 
 function requestCell(name, date) {
@@ -282,6 +541,7 @@ function requestCell(name, date) {
       data-cell-key="${escapeAttr(key)}"
       aria-selected="${selected ? "true" : "false"}"
     >
+      <span class="cell-date" aria-hidden="true">${dayLabel(date)}</span>
       ${html}
     </td>
   `;
@@ -401,6 +661,17 @@ function adminLockBlock() {
 
 function lockNotice() {
   return current.locked ? `<div class="error-banner">근무 신청이 마감되었습니다.</div>` : "";
+}
+
+/** 키보드 없이도 신청을 넣을 수 있어야 한다 — 폰에는 D/E/N/O를 칠 방법이 없다. */
+function shiftButton(shift, label) {
+  return `
+    <button
+      type="button"
+      data-apply-shift="${shift}"
+      ${isInputDisabled() ? "disabled" : ""}
+    >${label}</button>
+  `;
 }
 
 function modeButton(mode, label) {

@@ -5,6 +5,8 @@ import { onClickBusy } from "../ui.js";
 
 export async function renderWardSelect(root, navigate) {
   root.innerHTML = `
+    <div class="auth-shell">
+    <img class="brand-hero" src="assets/mascot.png" alt="" width="560" height="430" />
     <h1>Duty Maker</h1>
     <p class="caption">병원/병동을 선택하거나 새로 등록하세요.</p>
     <div class="card">
@@ -28,6 +30,7 @@ export async function renderWardSelect(root, navigate) {
       <input type="password" id="reg-code" />
       <button class="primary" id="register-btn">병동 등록</button>
       <div id="reg-error"></div>
+    </div>
     </div>
   `;
 
