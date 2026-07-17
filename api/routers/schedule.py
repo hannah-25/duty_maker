@@ -181,7 +181,7 @@ def _request_out(req: DutyRequest) -> ScheduleRequestOut:
     )
 
 
-def _build_report(ss: dict):
+def _build_report(ss: dict, user: CurrentUser):
     result = ss.get("schedule_result")
     if result is None or not result.feasible:
         return None
@@ -333,7 +333,7 @@ def _schedule_out(ss: dict, user: CurrentUser) -> ScheduleOut:
         ScheduleAssignmentOut(nurse_name=name, date=day.isoformat(), shift=shift.value)
         for (name, day), shift in sorted(result.assignments.items(), key=lambda item: (item[0][0], item[0][1]))
     ]
-    report = _build_report(ss)
+    report = _build_report(ss, user)
     assistant_rows = _assistant_rows(ss)
     out = ScheduleOut(
         year=year,
