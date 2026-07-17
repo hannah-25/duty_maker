@@ -36,6 +36,8 @@ WEIGHT_S_USAGE = 15
 WEIGHT_NEW_JUNIOR_OVERLAP = 12
 WEIGHT_AL_EXCESS = 10
 WEIGHT_AL_BALANCE = 40  # 연차를 균등하게 — 최대 연차 인원 최소화  # 연차 1인 1개 초과분
+WEIGHT_TRINITY_A_PAIR_SHORTFALL = 30_000
+WEIGHT_TRINITY_A_PAIR_CONCENTRATION = 8_000
 
 # 병동별 제약 설정 기본값 — 병동마다 다르게 켜고 끌 수 있다.
 # (오프 상한은 항상 적용되는 규칙이라 설정에 없음.
@@ -510,6 +512,7 @@ class ScheduleModel:
         self._soft_avoid_new_junior_overlap()
         self._soft_al_excess(extra_al_allowance)
         self._soft_al_balance()
+        self._soft_trinity_a_pair_overlap()
 
     def _soft_off_shortfall(self):
         """O가 목표 오프일수에 못 미치면 매우 무거운 벌점 (실행불가 회피용 최후수단).
@@ -746,6 +749,48 @@ class ScheduleModel:
             al_count = sum(self.val(nurse.name, d, ShiftType.AL) for d in self.current_days)
             self.model.Add(max_al >= al_count)
         self.penalties.append(("al_balance", WEIGHT_AL_BALANCE, max_al))
+
+    def _soft_trinity_a_pair_overlap(self):
+        """Prefer a distributed shared-duty pattern for the Trinity A pair."""
+        if not self.settings.get("trinity_a_pair_overlap"):
+            return
+        first_name, second_name = "우창희", "정해주"
+        nurse_names = {nurse.name for nurse in self.nurses}
+        if first_name not in nurse_names or second_name not in nurse_names:
+            return
+
+        shared_days = []
+        working_shifts = (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S)
+        for day in self.current_days:
+            first_work = self.model.NewBoolVar(f"trinity_a_first_work_{day.isoformat()}")
+            second_work = self.model.NewBoolVar(f"trinity_a_second_work_{day.isoformat()}")
+            self.model.AddMaxEquality(
+                first_work,
+                [self.val(first_name, day, shift) for shift in working_shifts],
+            )
+            self.model.AddMaxEquality(
+                second_work,
+                [self.val(second_name, day, shift) for shift in working_shifts],
+            )
+            shared = self.model.NewBoolVar(f"trinity_a_shared_{day.isoformat()}")
+            self.model.AddBoolAnd([first_work, second_work]).OnlyEnforceIf(shared)
+            self.model.AddBoolOr([first_work.Not(), second_work.Not(), shared])
+            shared_days.append((day, shared))
+
+        overlap_count = sum(shared for _, shared in shared_days)
+        shortfall = self.model.NewIntVar(0, 8, "trinity_a_pair_shortfall")
+        self.model.Add(shortfall >= 8 - overlap_count)
+        self.penalties.append(("trinity_a_pair_shortfall", WEIGHT_TRINITY_A_PAIR_SHORTFALL, shortfall))
+
+        midpoint = len(self.current_days) // 2
+        early_count = sum(shared for _, shared in shared_days[:midpoint])
+        late_count = sum(shared for _, shared in shared_days[midpoint:])
+        early_excess = self.model.NewIntVar(0, len(self.current_days), "trinity_a_pair_early_excess")
+        late_shortfall = self.model.NewIntVar(0, 4, "trinity_a_pair_late_shortfall")
+        self.model.Add(early_excess >= early_count - 4)
+        self.model.Add(late_shortfall >= 4 - late_count)
+        self.penalties.append(("trinity_a_pair_early_excess", WEIGHT_TRINITY_A_PAIR_CONCENTRATION, early_excess))
+        self.penalties.append(("trinity_a_pair_late_shortfall", WEIGHT_TRINITY_A_PAIR_CONCENTRATION, late_shortfall))
 
     # ------------------------------------------------------------ Tier 3 --
     @staticmethod

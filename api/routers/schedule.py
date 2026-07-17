@@ -32,6 +32,15 @@ from core.validator import validate_schedule
 
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
 
+TRINITY_A_WARD_ID = "bb5d9d97767667e6"
+
+
+def _solver_settings(ss: dict, user: CurrentUser) -> dict:
+    settings = resolve_ward_settings(ss)
+    if user.ward_id == TRINITY_A_WARD_ID:
+        settings["trinity_a_pair_overlap"] = True
+    return settings
+
 
 def _selected_holidays(ss: dict, year: int, month: int) -> set[date]:
     result = set()
@@ -185,7 +194,7 @@ def _build_report(ss: dict):
         result.assignments,
         _requirements(ss, year, month),
         _off_target(ss, year, month),
-        settings=resolve_ward_settings(ss),
+        settings=_solver_settings(ss, user),
     )
 
 
@@ -466,7 +475,7 @@ def regenerate_preview(
     candidate = generate_schedule(
         ss.get("nurses", []), year, month, _requirements(ss, year, month), _off_target(ss, year, month),
         duty_requests=_requests_for_month(ss, {n.name for n in ss.get("nurses", [])}, year, month),
-        time_limit_seconds=60.0, settings=resolve_ward_settings(ss), fixed_assignments=fixed,
+        time_limit_seconds=60.0, settings=_solver_settings(ss, user), fixed_assignments=fixed,
     )
     if not candidate.feasible:
         guidance = _infeasibility_messages(ss, candidate.infeasible_categories)

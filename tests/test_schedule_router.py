@@ -4,7 +4,13 @@ import pytest
 
 from api.deps import CurrentUser
 from api.routers import schedule as schedule_router
-from api.routers.schedule import _manual_assignments, _requests_for_month, _validate_selected_cells
+from api.routers.schedule import (
+    TRINITY_A_WARD_ID,
+    _manual_assignments,
+    _requests_for_month,
+    _solver_settings,
+    _validate_selected_cells,
+)
 from api.schemas import ManualAssignmentIn, ScheduleCellIn, ScheduleOut
 from core.models import DutyRequest, Nurse, ScheduleResult, ShiftType
 
@@ -65,3 +71,13 @@ def test_manual_assignment_pins_cell_and_increments_revision(monkeypatch):
     assert state["manual_overrides"] == {"Kim|2026-07-01": "N"}
     assert state["schedule_previews"] == {}
     assert result.revision == 4
+
+
+def test_trinity_pair_preference_is_limited_to_trinity_a(monkeypatch):
+    monkeypatch.setattr(schedule_router, "resolve_ward_settings", lambda _: {"weekday_charge_D": 2})
+
+    trinity = _solver_settings({}, CurrentUser(TRINITY_A_WARD_ID, "admin", True))
+    other = _solver_settings({}, CurrentUser("other-ward", "admin", True))
+
+    assert trinity["trinity_a_pair_overlap"] is True
+    assert "trinity_a_pair_overlap" not in other
