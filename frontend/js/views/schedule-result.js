@@ -203,8 +203,20 @@ function paintSchedule(container) {
 
   const view = body.querySelector("#schedule-view");
   const renderView = () => {
+    const previousScroll = view.querySelector(".schedule-scroll");
+    const previousScrollLeft = previousScroll?.scrollLeft ?? 0;
+    const previousScrollTop = previousScroll?.scrollTop ?? 0;
     const visibleContext = scopedContext(ctx);
     view.innerHTML = viewMode === "calendar" ? calendarViewHTML(visibleContext) : gridViewHTML(visibleContext);
+    const nextScroll = view.querySelector(".schedule-scroll");
+    if (nextScroll) {
+      // Some controls still re-render the table. Keep the reader at the same
+      // position even when the scroll container itself is replaced.
+      requestAnimationFrame(() => {
+        nextScroll.scrollLeft = previousScrollLeft;
+        nextScroll.scrollTop = previousScrollTop;
+      });
+    }
     bindRegionSelection(body, view, visibleContext, renderView);
     bindScheduleAssignmentEditing(body, view, renderView);
   };
@@ -345,7 +357,13 @@ function bindRegionSelection(body, view, ctx, renderView) {
     if (!anchor) return;
     anchor = null;
     activePointerId = null;
-    renderView();
+    // The selected-cell styling is updated while dragging.  Re-rendering the
+    // table here replaces .schedule-scroll and resets its scroll position.
+    // Only the controls need to reflect the completed selection.
+    const selectionCells = selectedCells(ctx);
+    clearButton.hidden = !regionSelection;
+    previewButton.hidden = !regionSelection || Boolean(regenerationPreview);
+    status.textContent = `직원 ${regionSelection.rowEnd - regionSelection.rowStart + 1}명 · 날짜 ${regionSelection.colEnd - regionSelection.colStart + 1}일 · 셀 ${selectionCells.length}개`;
   };
   view.addEventListener("pointermove", (event) => {
     if (!anchor || event.pointerId !== activePointerId || event.buttons !== 1) return;

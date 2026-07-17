@@ -47,6 +47,9 @@ export async function renderRequests(container) {
 }
 
 function paint(container) {
+  const previousScroll = container.querySelector(".request-editor .schedule-scroll");
+  const previousScrollLeft = previousScroll?.scrollLeft ?? 0;
+  const previousScrollTop = previousScroll?.scrollTop ?? 0;
   document.body.classList.remove("has-request-sheet");
   container.innerHTML = `
     <h2 style="font-size:1.15rem">근무 신청</h2>
@@ -122,6 +125,13 @@ function paint(container) {
   `;
 
   bindEditor(container);
+  const nextScroll = container.querySelector(".request-editor .schedule-scroll");
+  if (nextScroll) {
+    requestAnimationFrame(() => {
+      nextScroll.scrollLeft = previousScrollLeft;
+      nextScroll.scrollTop = previousScrollTop;
+    });
+  }
 }
 
 function bindEditor(container) {
@@ -172,7 +182,7 @@ function bindEditor(container) {
   });
   container.querySelector("#request-clear-selection").addEventListener("click", () => {
     clearSelection();
-    repaint(container);
+    updateGridSelection(container);
   });
   onClickBusy(container.querySelector("#request-delete-selection"), () => deleteSelectedRequests(container));
 
@@ -181,17 +191,19 @@ function bindEditor(container) {
       if (isInputDisabled()) return;
       e.preventDefault();
       startSelection(cell.dataset.cellKey);
-      repaint(container);
+      // Register for every drag.  A one-time listener registered at render
+      // time can be consumed by an unrelated click, leaving selection stuck.
+      document.addEventListener("mouseup", stopDragging, { once: true });
+      updateGridSelection(container);
     });
     cell.addEventListener("mouseenter", () => {
       if (!editor.isDragging || isInputDisabled()) return;
       extendSelection(cell.dataset.cellKey);
-      repaint(container);
+      updateGridSelection(container);
     });
     cell.addEventListener("click", () => focusGrid(container));
   }
 
-  document.addEventListener("mouseup", stopDragging, { once: true });
   container.querySelector(".request-editor").addEventListener("keydown", (e) => handleKeydown(e, container));
   focusGrid(container);
 }
@@ -200,6 +212,20 @@ function repaint(container) {
   const statusText = container.querySelector("#request-editor-status")?.textContent ?? "";
   paint(container);
   container.querySelector("#request-editor-status").textContent = statusText || selectionText();
+}
+
+function updateGridSelection(container) {
+  for (const cell of container.querySelectorAll("[data-cell-key]")) {
+    const key = cell.dataset.cellKey;
+    const selected = editor.selectedKeys.has(key);
+    const focused = editor.focusedKey === key;
+    cell.classList.toggle("is-selected", selected);
+    cell.classList.toggle("is-focused", focused);
+    cell.setAttribute("aria-selected", String(selected));
+    const hint = cell.querySelector(".request-day-hint");
+    if (hint) hint.textContent = focused || selected ? "D/E/N/O" : "";
+  }
+  focusGrid(container);
 }
 
 function handleKeydown(e, container) {
@@ -217,7 +243,7 @@ function handleKeydown(e, container) {
       return;
     }
     clearSelection();
-    repaint(container);
+    updateGridSelection(container);
     return;
   }
   if (e.key === "Backspace" || e.key === "Delete") {
@@ -228,7 +254,7 @@ function handleKeydown(e, container) {
   if (e.key.startsWith("Arrow")) {
     e.preventDefault();
     moveFocus(e.key, e.shiftKey);
-    repaint(container);
+    updateGridSelection(container);
   }
 }
 
