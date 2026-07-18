@@ -162,6 +162,7 @@ class ScheduleModel:
         self._rule_max_consecutive_nights()
         self._rule_allowed_shifts()
         self._rule_n_monthly_cap()
+        self._rule_night_balance()
         self._rule_night_dedicated()
         self._rule_staffing_range()
         self._rule_charge_placement()
@@ -362,6 +363,30 @@ class ScheduleModel:
                 continue
             total_n = sum(self.val(nurse.name, d, ShiftType.N) for d in self.current_days)
             self._enforce(self.model.Add(total_n <= nurse.max_n_hard), lit)
+
+    def _rule_night_balance(self, maximum_gap: int = 2):
+        """Keep monthly N counts within ``maximum_gap`` for general N-capable nurses.
+
+        Helpers and N-dedicated staff are deliberately excluded: helpers have a
+        separately fixed workload and dedicated staff have a separately fixed N
+        quota.  Nurses unable to work N are also outside this comparison.
+        """
+        eligible = [nurse for nurse in self.nurses if self._n_eligible(nurse)]
+        if len(eligible) < 2:
+            return
+        lit = self._assumption("night_balance")
+        totals = {
+            nurse.name: sum(self.val(nurse.name, day, ShiftType.N) for day in self.current_days)
+            for nurse in eligible
+        }
+        for first in eligible:
+            for second in eligible:
+                if first.name == second.name:
+                    continue
+                self._enforce(
+                    self.model.Add(totals[first.name] - totals[second.name] <= maximum_gap),
+                    lit,
+                )
 
     def _rule_night_dedicated(self):
         """나이트 전담(N만 가능한 본원 간호사): 월 N 개수를 개인 상한(max_n_hard)만큼 고정하고,
