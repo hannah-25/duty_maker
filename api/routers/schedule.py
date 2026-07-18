@@ -22,7 +22,6 @@ from api.schemas import (
 )
 from api.state_store import (
     load_ward_state,
-    prev_month_confirmed,
     prev_month_history,
     resolve_ward_settings,
     save_ward_state,
@@ -403,11 +402,7 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
 
     year = int(ss.get("year", 2026))
     month = int(ss.get("month", 7))
-    if not prev_month_confirmed(ss, year, month):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "직전 달 근무를 먼저 입력하세요. '직전 달' 탭에서 지난달 마지막 근무를 저장해야 합니다.",
-        )
+    # Missing prior-month history is treated as OFF by prev_month_history().
     requirements = _requirements(ss, year, month)
     off_target = _off_target(ss, year, month)
     nurse_names = {nurse.name for nurse in nurses}

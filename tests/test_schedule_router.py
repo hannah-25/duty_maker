@@ -121,21 +121,32 @@ def test_generate_enables_pair_preference_for_trinity_a(monkeypatch):
     assert captured["trinity_a_pair_overlap"] is True
 
 
-def test_generate_blocks_without_prev_month_input(monkeypatch):
+def test_generate_allows_missing_prev_month_input(monkeypatch):
     state = {
         "year": 2026,
         "month": 8,
-        "nurses": [Nurse("우창희")],
+        "nurses": [Nurse("Kim")],
         "duty_requests": [],
         "manual_overrides": {},
-        "prev_month_inputs": {},  # 미확정
+        "prev_month_inputs": {},
     }
+    captured = {}
     monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
     monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_requirements", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_infeasibility_messages", lambda *_: [])
+    monkeypatch.setattr(schedule_router, "_schedule_out", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_solver_settings", lambda *_: {})
 
-    with pytest.raises(Exception) as exc:
-        schedule_router.generate(CurrentUser("ward", "admin", True))
-    assert "직전 달" in str(exc.value)
+    def fake_generate(*_args, **kwargs):
+        captured["history"] = kwargs["history"]
+        return ScheduleResult(feasible=False)
+
+    monkeypatch.setattr(schedule_router, "generate_schedule", fake_generate)
+    schedule_router.generate(CurrentUser("ward", "admin", True))
+
+    assert captured["history"] == {}
 
 
 def test_generate_passes_prev_month_history_to_solver(monkeypatch):
