@@ -13,6 +13,7 @@ from api.routers.schedule import (
 )
 from api.schemas import ManualAssignmentIn, ScheduleCellIn, ScheduleOut
 from core.models import DutyRequest, Nurse, ScheduleResult, ShiftType
+from core.constraints import merge_ward_settings
 
 
 def test_requests_for_month_excludes_previous_month_and_unknown_nurses():
@@ -57,7 +58,6 @@ def test_manual_assignment_pins_cell_and_increments_revision(monkeypatch):
     }
     monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
     monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
-    monkeypatch.setattr(schedule_router, "_staffing_violations", lambda *_: [])
     monkeypatch.setattr(
         schedule_router, "_schedule_out",
         lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
@@ -82,6 +82,13 @@ def test_trinity_pair_preference_is_limited_to_trinity_a(monkeypatch):
 
     assert trinity["trinity_a_pair_overlap"] is True
     assert "trinity_a_pair_overlap" not in other
+
+
+def test_solver_settings_preserves_trinity_pair_flag():
+    settings = merge_ward_settings({"weekday_charge_D": 3, "trinity_a_pair_overlap": True})
+
+    assert settings["weekday_charge_D"] == 3
+    assert settings["trinity_a_pair_overlap"] is True
 
 
 def test_generate_enables_pair_preference_for_trinity_a(monkeypatch):

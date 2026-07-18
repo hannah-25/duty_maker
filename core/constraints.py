@@ -57,9 +57,9 @@ DEFAULT_WARD_SETTINGS = {
 def merge_ward_settings(settings: dict | None) -> dict:
     merged = dict(DEFAULT_WARD_SETTINGS)
     if settings:
-        for key in DEFAULT_WARD_SETTINGS:
-            if settings.get(key) is not None:
-                merged[key] = settings[key]
+        # 병동별 추가 제약 플래그도 보존한다. 기본 설정 키만 복사하면
+        # 트리니티 A 전용 같은 솔버 옵션이 모델에 도달하지 못한다.
+        merged.update({key: value for key, value in settings.items() if value is not None})
     return merged
 
 
