@@ -57,6 +57,7 @@ def test_manual_assignment_pins_cell_and_increments_revision(monkeypatch):
     }
     monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
     monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_staffing_violations", lambda *_: [])
     monkeypatch.setattr(
         schedule_router, "_schedule_out",
         lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),

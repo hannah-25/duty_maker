@@ -153,5 +153,14 @@ def put_requirements(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
+    # 인원 기준이 바뀌면 기존 배정은 새 하한·상한을 보장하지 못한다.
+    # 이전 결과나 수동 고정을 남기지 않고 반드시 새 기준으로 다시 생성하게 한다.
+    if ss.get("schedule_result") is not None:
+        ss["schedule_result"] = None
+        ss["result_published"] = False
+        ss["manual_overrides"] = {}
+        ss["schedule_previews"] = {}
+        ss["schedule_revision"] = int(ss.get("schedule_revision", 0)) + 1
+
     save_ward_state(user.ward_id, ss)
     return _requirements_out(ss)

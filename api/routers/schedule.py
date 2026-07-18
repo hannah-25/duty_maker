@@ -237,6 +237,34 @@ def _manual_assignments(ss: dict, year: int, month: int) -> dict[tuple[str, date
     return assignments
 
 
+def _staffing_violations(
+    ss: dict,
+    assignments: dict[tuple[str, date], ShiftType],
+    year: int,
+    month: int,
+) -> list[str]:
+    """Return daily staffing range violations for a proposed manual edit."""
+    violations: list[str] = []
+    for day, req in _requirements(ss, year, month).items():
+        counts = {shift: 0 for shift in (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S)}
+        for nurse in ss.get("nurses", []):
+            shift = assignments.get((nurse.name, day))
+            if shift in counts:
+                counts[shift] += 1
+        d_total = counts[ShiftType.D] + counts[ShiftType.S]
+        if not req.D.minimum <= d_total <= req.D.maximum:
+            violations.append(f"{day.isoformat()} D {d_total}명 (허용 {req.D.minimum}~{req.D.maximum}명)")
+        if not req.E.minimum <= counts[ShiftType.E] <= req.E.maximum:
+            violations.append(
+                f"{day.isoformat()} E {counts[ShiftType.E]}명 (허용 {req.E.minimum}~{req.E.maximum}명)"
+            )
+        if not req.N.minimum <= counts[ShiftType.N] <= req.N.maximum:
+            violations.append(
+                f"{day.isoformat()} N {counts[ShiftType.N]}명 (허용 {req.N.minimum}~{req.N.maximum}명)"
+            )
+    return violations
+
+
 def _validate_selected_cells(ss: dict, cells, year: int, month: int) -> set[tuple[str, date]]:
     nurses = {nurse.name for nurse in ss.get("nurses", []) if not nurse.is_helper}
     selected: set[tuple[str, date]] = set()
@@ -434,7 +462,15 @@ def update_assignment(
             shift = ShiftType(body.shift)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "지원하지 않는 근무 코드입니다.") from exc
-        result.assignments[key] = shift
+        candidate_assignments = dict(result.assignments)
+        candidate_assignments[key] = shift
+        violations = _staffing_violations(ss, candidate_assignments, year, month)
+        if violations:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "인원 기준 하한·상한을 위반하는 수동 변경입니다: " + "; ".join(violations),
+            )
+        result.assignments = candidate_assignments
         overrides[override_key] = shift.value
     active_requests = [
         request for request in _requests_for_month(
