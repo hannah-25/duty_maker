@@ -57,6 +57,32 @@ def test_soft_does_not_penalize_multi_day_work_block():
     assert _isolated_workday_penalty_for([ShiftType.O, ShiftType.D, ShiftType.D]) == 0
 
 
+def _night_off_return_penalty_for(sequence):
+    nurse = Nurse(name="a", can_charge=True)
+    days = [date(2026, 1, i) for i in range(1, len(sequence) + 1)]
+    sm = ScheduleModel([nurse], days, [], {}, {}, {"a": 0})
+    for day, shift in zip(days, sequence):
+        sm.model.Add(sm.val("a", day, shift) == 1)
+    sm._soft_avoid_night_after_night_off()
+    sm.model.Minimize(sum(sm.objective_terms()))
+
+    solver = cp_model.CpSolver()
+    assert solver.Solve(sm.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    return sum(
+        solver.Value(var)
+        for category, _weight, var in sm.penalties
+        if category == "night_off_return"
+    )
+
+
+def test_soft_penalizes_night_after_night_off():
+    assert _night_off_return_penalty_for([ShiftType.N, ShiftType.O, ShiftType.O, ShiftType.N]) == 1
+
+
+def test_soft_allows_day_as_first_shift_after_night_off():
+    assert _night_off_return_penalty_for([ShiftType.N, ShiftType.O, ShiftType.O, ShiftType.D]) == 0
+
+
 def test_nurse_levels_set_role_capabilities():
     senior = Nurse(name="senior", level=NurseLevel.SENIOR_CHARGE)
     middle = Nurse(name="middle", level=NurseLevel.MIDDLE)

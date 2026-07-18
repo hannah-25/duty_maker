@@ -93,6 +93,33 @@ def test_firestore_payload_roundtrips_schedule_previews():
     assert restored["schedule_previews"]["abc123"]["base_revision"] == 3
 
 
+def test_firestore_payload_roundtrips_schedules_by_month():
+    year, month = 2026, 7
+    nurse = Nurse("archive-nurse")
+    result = ScheduleResult(
+        feasible=True,
+        assignments={(nurse.name, day): ShiftType.O for day in month_dates(year, month)},
+    )
+    state = {
+        "year": year,
+        "month": month,
+        "nurses": [nurse],
+        "schedules_by_month": {"2026-06": result, "2026-07": result},
+        "published_by_month": {"2026-07": True},
+        "prev_month_inputs": {"2026-07": {nurse.name: {"2026-06-30": "N"}}},
+    }
+    payload = serialize_state(state)
+
+    firestore_form = _to_firestore_payload(payload)
+    assert not _has_nested_array(firestore_form["schedules_by_month"])
+    assert not _has_nested_array(firestore_form["prev_month_inputs"])
+
+    restored = _from_firestore_payload(firestore_form)
+    assert restored["schedules_by_month"]["2026-06"]["assignments"] == (
+        payload["schedules_by_month"]["2026-06"]["assignments"]
+    )
+
+
 def test_xlsx_export_smoke(monkeypatch):
     year, month = 2026, 7
     nurse = Nurse("test-nurse")

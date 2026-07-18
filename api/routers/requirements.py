@@ -16,9 +16,14 @@ from api.schemas import (
     StaffingTemplateIn,
     StaffingTemplateOut,
 )
-from api.state_store import load_ward_state, normalize_month_state, save_ward_state
+from api.state_store import (
+    load_ward_state,
+    normalize_month_state,
+    save_ward_state,
+    staffing_signature,
+)
 from core.holidays_kr import get_month_holiday_items
-from core.models import ShiftRequirement, month_dates
+from core.models import ShiftRequirement, lookback_dates, month_dates, month_key
 
 router = APIRouter(prefix="/api/requirements", tags=["requirements"])
 
@@ -48,7 +53,40 @@ def _template_out(
 
 
 def _current_month_key(year: int, month: int) -> str:
-    return f"{year}-{month:02d}"
+    return month_key(year, month)
+
+
+def _is_one_month_after(old_key: str, new_key: str) -> bool:
+    try:
+        old_year, old_month = (int(part) for part in old_key.split("-"))
+        new_year, new_month = (int(part) for part in new_key.split("-"))
+    except ValueError:
+        return False
+    return new_year * 12 + (new_month - 1) == old_year * 12 + (old_month - 1) + 1
+
+
+def _maybe_autofill_prev_month(ss: dict, old_key: str, new_key: str, year: int, month: int) -> None:
+    """월을 정확히 +1 진행하면, 직전 달 근무표의 마지막 5일을 직전 달 입력으로 채운다.
+
+    이미 그 월에 대한 직전 달 입력이 확정돼 있으면 유지한다(왕복 이동 시 보존).
+    """
+    if old_key == new_key:
+        return
+    inputs = ss.setdefault("prev_month_inputs", {})
+    if new_key in inputs:
+        return
+    if not _is_one_month_after(old_key, new_key):
+        return
+    prev_result = (ss.get("schedules_by_month") or {}).get(old_key)
+    if prev_result is None:
+        return
+    lookback = {day.isoformat() for day in lookback_dates(year, month, 5)}
+    values: dict[str, dict[str, str]] = {}
+    for (name, day), shift in prev_result.assignments.items():
+        iso = day.isoformat()
+        if iso in lookback:
+            values.setdefault(name, {})[iso] = shift.value
+    inputs[new_key] = values
 
 
 def _valid_date(raw: str, year: int, month: int) -> date:
@@ -153,14 +191,28 @@ def put_requirements(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
-    # 인원 기준이 바뀌면 기존 배정은 새 하한·상한을 보장하지 못한다.
-    # 이전 결과나 수동 고정을 남기지 않고 반드시 새 기준으로 다시 생성하게 한다.
-    if ss.get("schedule_result") is not None:
-        ss["schedule_result"] = None
-        ss["result_published"] = False
-        ss["manual_overrides"] = {}
-        ss["schedule_previews"] = {}
+    # 인원 기준이 바뀌어도 이미 생성된 근무표는 지우지 않는다. 근무표는 관리자가
+    # 근무표 생성을 다시 눌렀을 때만 교체된다. 서명은 기준 변경 감지(미리보기
+    # 무효화·클라이언트 새로고침 유도)에만 쓴다.
+    new_key = next_month_key
+    signatures = ss.setdefault("schedule_signatures", {})
+    new_signature = staffing_signature(ss, body.year, body.month)
+    prior_signature = signatures.get(new_key)
+    signatures[new_key] = new_signature
+    staffing_changed = prior_signature is not None and prior_signature != new_signature
+
+    archive = ss.setdefault("schedules_by_month", {})
+
+    # 직전 달 입력 자동 채우기 (월 +1 진행 시).
+    _maybe_autofill_prev_month(ss, previous_month_key, new_key, body.year, body.month)
+
+    # 활성 슬롯을 대상 월의 보관본으로 맞춘다.
+    ss["schedule_result"] = archive.get(new_key)
+    ss["result_published"] = ss.get("published_by_month", {}).get(new_key, False)
+
+    if previous_month_key != new_key or staffing_changed:
         ss["schedule_revision"] = int(ss.get("schedule_revision", 0)) + 1
+        ss["schedule_previews"] = {}
 
     save_ward_state(user.ward_id, ss)
     return _requirements_out(ss)

@@ -49,8 +49,12 @@ _PLAIN_KEYS = (
     "requests_locked",
     "result_published",
     "constraint_settings",
+    "export_settings",
     "schedule_revision",
     "manual_overrides",
+    "published_by_month",
+    "schedule_signatures",
+    "prev_month_inputs",
 )
 
 
@@ -168,6 +172,11 @@ def serialize_state(ss) -> dict:
         payload["weekend_template"] = _template_to_list(ss["weekend_template"])
     result = ss.get("schedule_result")
     payload["schedule_result"] = _result_to_dict(result) if result is not None else None
+    payload["schedules_by_month"] = {
+        key: _result_to_dict(month_result)
+        for key, month_result in ss.get("schedules_by_month", {}).items()
+        if month_result is not None
+    }
     previews = {}
     for preview_id, preview in ss.get("schedule_previews", {}).items():
         row = {k: v for k, v in preview.items() if k != "result"}
@@ -194,6 +203,11 @@ def apply_state(ss, payload: dict) -> None:
         ss["weekend_template"] = _template_from_list(payload["weekend_template"])
     if payload.get("schedule_result"):
         ss["schedule_result"] = _result_from_dict(payload["schedule_result"])
+    ss["schedules_by_month"] = {
+        key: _result_from_dict(month_result)
+        for key, month_result in payload.get("schedules_by_month", {}).items()
+        if month_result
+    }
     ss["schedule_previews"] = {
         preview_id: {**row, "result": _result_from_dict(row["result"])}
         for preview_id, row in payload.get("schedule_previews", {}).items()
@@ -305,6 +319,12 @@ def _to_firestore_payload(payload: dict) -> dict:
                 for row in converted[key]
             ]
     converted["schedule_result"] = _result_assignments_to_firestore(converted.get("schedule_result"))
+    schedules = converted.get("schedules_by_month")
+    if schedules:
+        converted["schedules_by_month"] = {
+            key: _result_assignments_to_firestore(month_result)
+            for key, month_result in schedules.items()
+        }
     previews = converted.get("schedule_previews")
     if previews:
         converted["schedule_previews"] = {
@@ -317,6 +337,12 @@ def _to_firestore_payload(payload: dict) -> dict:
 def _from_firestore_payload(payload: dict) -> dict:
     converted = dict(payload)
     converted["schedule_result"] = _result_assignments_from_firestore(converted.get("schedule_result"))
+    schedules = converted.get("schedules_by_month")
+    if schedules:
+        converted["schedules_by_month"] = {
+            key: _result_assignments_from_firestore(month_result)
+            for key, month_result in schedules.items()
+        }
     previews = converted.get("schedule_previews")
     if previews:
         converted["schedule_previews"] = {

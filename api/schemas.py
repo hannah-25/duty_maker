@@ -188,6 +188,20 @@ class RequestLockIn(BaseModel):
     locked: bool
 
 
+class PrevMonthIn(BaseModel):
+    # 간호사명 -> {날짜(ISO): 근무값}. 빈 값/누락 셀은 오프로 간주한다.
+    values: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+
+class PrevMonthOut(BaseModel):
+    year: int
+    month: int
+    dates: list[str]
+    nurse_names: list[str]
+    values: dict[str, dict[str, str]]
+    confirmed: bool
+
+
 class ScheduleAssignmentOut(BaseModel):
     nurse_name: str
     date: str
@@ -287,6 +301,16 @@ class WardSettings(BaseModel):
     weekend_charge_D: int = Field(default=1, ge=0, le=5)
     weekend_charge_E: int = Field(default=1, ge=0, le=5)
     weekend_charge_N: int = Field(default=1, ge=0, le=5)
+
+
+class ExportSettings(BaseModel):
+    """??? ???? ?? ??."""
+
+    title_mode: str = Field(default="ward_month_off", pattern="^(ward_month_off|hospital_ward_month_off|custom)$")
+    custom_title: str = Field(default="", max_length=100)
+    holiday_color: str = Field(default="#FFE7D8", pattern=r"^#[0-9A-Fa-f]{6}$")
+    honored_off_color: str = Field(default="#2563EB", pattern=r"^#[0-9A-Fa-f]{6}$")
+    summary_fields: list[str] = Field(default_factory=lambda: ["E", "N", "O"])
 
 
 class PublishIn(BaseModel):

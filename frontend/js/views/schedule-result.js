@@ -24,9 +24,10 @@ let regionMode = false;
 let regionSelection = null;
 let regenerationPreview = null;
 let editingCell = null;
+let exportSettings = null;
 
 export async function renderScheduleResult(container) {
-  current = await api.getSchedule();
+  [current, exportSettings] = await Promise.all([api.getSchedule(), api.getExportSettings()]);
   viewMode = state.isAdmin ? "grid" : "calendar";
   scheduleScope = state.isAdmin ? "all" : "mine";
   regionMode = false;
@@ -80,6 +81,25 @@ function paint(container) {
       });
     }
   }
+  const saveExportSettings = container.querySelector("#save-export-settings-btn");
+  if (saveExportSettings) {
+    onClickBusy(saveExportSettings, async () => {
+      const status = container.querySelector("#schedule-status");
+      try {
+        exportSettings = await api.putExportSettings({
+          title_mode: container.querySelector("#export-title-mode").value,
+          custom_title: container.querySelector("#export-custom-title").value.trim(),
+          holiday_color: container.querySelector("#export-holiday-color").value,
+          honored_off_color: container.querySelector("#export-honored-off-color").value,
+          summary_fields: [...container.querySelectorAll("[data-summary-field]:checked")].map((input) => input.value),
+        });
+        status.textContent = "\ub0b4\ubcf4\ub0b4\uae30 \ud45c\uc2dc \uc124\uc815\uc744 \uc800\uc7a5\ud588\uc2b5\ub2c8\ub2e4.";
+      } catch (err) {
+        status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+      }
+    }, "\uc800\uc7a5 \uc911...");
+  }
+
   for (const button of container.querySelectorAll("[data-download]")) {
     onClickBusy(
       button,
@@ -141,10 +161,35 @@ function adminControls() {
 
 function downloadControls() {
   if (current.feasible !== true || !current.visible) return "";
+  const adminSettings = state.isAdmin && exportSettings ? `
+    <div class="panel export-settings">
+      <h3>\ub0b4\ubcf4\ub0b4\uae30 \ud45c\uc2dc</h3>
+      <div class="settings-inline">
+        <label>\uc81c\ubaa9 \ud615\uc2dd
+          <select id="export-title-mode">
+            <option value="ward_month_off" ${exportSettings.title_mode === "ward_month_off" ? "selected" : ""}>\ubcd1\ub3d9\uba85 + \uc6d4 + \uadfc\ubb34\ud45c + OFF</option>
+            <option value="hospital_ward_month_off" ${exportSettings.title_mode === "hospital_ward_month_off" ? "selected" : ""}>\uae30\uad00\uba85 + \ubcd1\ub3d9\uba85 + \uc6d4 + \uadfc\ubb34\ud45c + OFF</option>
+            <option value="custom" ${exportSettings.title_mode === "custom" ? "selected" : ""}>\uc9c1\uc811 \uc785\ub825\ud55c \uc81c\ubaa9</option>
+          </select>
+        </label>
+        <label>\uc0ac\uc6a9\uc790 \uc81c\ubaa9 <input id="export-custom-title" maxlength="100" value="${escapeHtml(exportSettings.custom_title)}" /></label>
+        <label>\ud734\uc77c \uc0c9 <input id="export-holiday-color" type="color" value="${exportSettings.holiday_color}" /></label>
+        <label>\ubc18\uc601\ub41c O/\uc5f0\ucc28 \uc2e0\uccad \uc0c9 <input id="export-honored-off-color" type="color" value="${exportSettings.honored_off_color}" /></label>
+        <details class="export-summary-fields" open>
+          <summary>\uc6b0\uce21 \uc9d1\uacc4 \uc124\uc815</summary>
+          <div class="export-summary-fields__options">
+            ${[["D", "D"], ["E", "E"], ["N", "N"], ["O", "O"], ["AL", "\uc5f0\ucc28"]].map(([value, label]) => `<label class="inline-check"><input type="checkbox" data-summary-field value="${value}" ${(exportSettings.summary_fields ?? []).includes(value) ? "checked" : ""} /> ${label}</label>`).join("")}
+          </div>
+        </details>
+        <button id="save-export-settings-btn">\ud45c\uc2dc \uc124\uc815 \uc800\uc7a5</button>
+      </div>
+      <p class="caption">\ub450 \ud30c\uc77c\uc5d0 \ub3d9\uc77c\ud558\uac8c \uc801\uc6a9\ub429\ub2c8\ub2e4. \ud734\uc77c\uc740 \uc8fc\ub9d0\uacfc \uc120\ud0dd \uacf5\ud734\uc77c\uc744 \ud3ec\ud568\ud569\ub2c8\ub2e4.</p>
+    </div>` : "";
   return `
+    ${adminSettings}
     <div class="result-controls">
-      <button data-download="hwpx">HWPX 다운로드</button>
-      <button data-download="xlsx">XLSX 다운로드</button>
+      <button data-download="hwpx">HWPX \ub2e4\uc6b4\ub85c\ub4dc</button>
+      <button data-download="xlsx">XLSX \ub2e4\uc6b4\ub85c\ub4dc</button>
     </div>
   `;
 }

@@ -22,6 +22,7 @@ NS = {"hp": HP}
 
 TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "duty_template.hwpx"
 SECTION_NAME = "Contents/section0.xml"
+HEADER_NAME = "Contents/header.xml"
 
 # 글자 스타일 (모두 굵게): 검정 근무, 빨강 오프 X, 파랑(연차·신청 반영)
 CHAR_BLACK = "8"
@@ -88,6 +89,51 @@ def _nurse_role(index: int) -> str:
     return "간호사"
 
 
+def _with_export_colors(header_xml: bytes, holiday_color: str, honored_off_color: str) -> bytes:
+    """Keep the template borders but replace its holiday fill and request text colors."""
+    import re
+
+    text = header_xml.decode("utf-8")
+    holiday = holiday_color.upper()
+    text = re.sub(
+        r'(<hh:borderFill id="(?:23|24|25)".*?<hc:winBrush faceColor=")[^"]+',
+        rf'\g<1>{holiday}', text, flags=re.S,
+    )
+    text = re.sub(
+        r'(<hh:charPr id="16"[^>]*textColor=")[^"]+',
+        rf'\g<1>{honored_off_color.upper()}', text,
+    )
+    return text.encode("utf-8")
+
+
+
+_SUMMARY_LABELS = {"D": "D", "E": "E", "N": "N", "O": "O", "AL": "\uc5f0\ucc28"}
+_SUMMARY_START_COLUMN = 33
+_SUMMARY_CELL_WIDTH = 2148
+
+
+def _configure_summary_columns(tbl, summary_fields: list[str]) -> list[int]:
+    """Resize the template's right-hand summary area to exactly match selected fields."""
+    count = len(summary_fields)
+    for row in tbl.findall("hp:tr", NS):
+        cells = _cells_by_col(row)
+        prototype_source = cells.get(35)
+        if prototype_source is None:
+            prototype_source = cells[max(cells)]
+        prototype = deepcopy(prototype_source)
+        for cell in list(row.findall("hp:tc", NS)):
+            if _cell_col(cell) >= _SUMMARY_START_COLUMN:
+                row.remove(cell)
+        for offset in range(count):
+            cell = deepcopy(prototype)
+            cell.find("hp:cellAddr", NS).set("colAddr", str(_SUMMARY_START_COLUMN + offset))
+            cell.find("hp:cellSpan", NS).set("colSpan", "1")
+            row.append(cell)
+    tbl.set("colCnt", str(_SUMMARY_START_COLUMN + count))
+    size = tbl.find("hp:sz", NS)
+    size.set("width", str(78197 + (count - 3) * _SUMMARY_CELL_WIDTH))
+    return [_SUMMARY_START_COLUMN + offset for offset in range(count)]
+
 def export_schedule_hwpx(
     nurses: list[Nurse],
     year: int,
@@ -98,6 +144,10 @@ def export_schedule_hwpx(
     blue_cells: set[tuple[str, date]],
     assistants: list[Assistant] | None = None,
     assistant_marks: dict[tuple[str, date], ShiftType] | None = None,
+    title: str | None = None,
+    holiday_color: str = "#FFE7D8",
+    honored_off_color: str = "#2563EB",
+    summary_fields: list[str] | None = None,
 ) -> bytes:
     """근무표를 양식에 채운 hwpx 파일 바이트를 반환한다.
 
@@ -107,6 +157,7 @@ def export_schedule_hwpx(
     """
     assistants = assistants or []
     assistant_marks = assistant_marks or {}
+    summary_fields = [field for field in (summary_fields or ["E", "N", "O"]) if field in _SUMMARY_LABELS]
     template_bytes = TEMPLATE_PATH.read_bytes()
     with zipfile.ZipFile(io.BytesIO(template_bytes)) as zf:
         section_xml = zf.read(SECTION_NAME)
@@ -116,14 +167,17 @@ def export_schedule_hwpx(
     days = month_dates(year, month)
     off_days = {d for d in days if d.weekday() >= 5 or d in holidays}
 
-    # --- 제목 ---------------------------------------------------------------
-    for t in root.iter(_tag("t")):
-        if t.text and "근무표" in t.text:
-            t.text = f"집중치료실 {month}월 근무표(OFF {off_target_value}개)"
+    # --- title ---------------------------------------------------------------
+    for text_node in root.iter(_tag("t")):
+        if text_node.text and "\uadfc\ubb34\ud45c" in text_node.text:
+            text_node.text = title or f"\uc9d1\uc911\uce58\ub8cc\uc2e4 {month}\uc6d4 \uadfc\ubb34\ud45c(OFF {off_target_value}\uac1c)"
             break
 
-    # --- 표 골격: 헤더 2행 + 간호사 행들 + 간호조무사 행 ----------------------
+    # --- table ----------------------------------------------------------------
     tbl = root.find(".//hp:tbl", NS)
+    rows = tbl.findall("hp:tr", NS)
+    header_day, header_weekday = rows[0], rows[1]
+    summary_cols = _configure_summary_columns(tbl, summary_fields)
     rows = tbl.findall("hp:tr", NS)
     header_day, header_weekday = rows[0], rows[1]
     assistant_proto = rows[-1]  # 간호조무사 행 (보조 인력 행 스타일 원본)
@@ -150,6 +204,9 @@ def export_schedule_hwpx(
         _set_day_fill(day_cells[col], is_off)
         _set_cell_text(weekday_cells[col], WEEKDAY_KR[days[j].weekday()] if in_month else "", "17")
         _set_day_fill(weekday_cells[col], is_off)
+    for col, field in zip(summary_cols, summary_fields):
+        _set_cell_text(day_cells[col], _SUMMARY_LABELS[field], "17")
+        _set_cell_text(weekday_cells[col], "", "17")
 
     # --- 간호사 행 채우기 -----------------------------------------------------
     for i, (nurse, tr) in enumerate(zip(nurses, nurse_rows)):
@@ -169,12 +226,9 @@ def export_schedule_hwpx(
                 _set_cell_text(cells[col], "", CHAR_BLACK)
                 _set_day_fill(cells[col], False)
 
-        e_count = seq.count(ShiftType.E)
-        n_count = seq.count(ShiftType.N)
-        off_dev = seq.count(ShiftType.O) - off_target_value
-        _set_cell_text(cells[COL_E], str(e_count) if e_count else "", CHAR_BLACK)
-        _set_cell_text(cells[COL_N], str(n_count) if n_count else "", CHAR_BLACK)
-        _set_cell_text(cells[COL_OFF], str(off_dev) if off_dev else "", CHAR_BLACK)
+        for col, field in zip(summary_cols, summary_fields):
+            count = seq.count(ShiftType.AL if field == "AL" else ShiftType(field))
+            _set_cell_text(cells[col], str(count) if count else "", CHAR_BLACK)
 
     # --- 보조 인력 행: 희망 신청만 파란색 표시, 나머지는 수기 기입용으로 비움 ----
     for assistant, tr in zip(assistants, assistant_rows):
@@ -190,7 +244,7 @@ def export_schedule_hwpx(
             else:
                 _set_cell_text(cells[col], "", CHAR_BLACK)
             _set_day_fill(cells[col], j < len(days) and days[j] in off_days)
-        for col in (COL_E, COL_N, COL_OFF):
+        for col in summary_cols:
             _set_cell_text(cells[col], "", CHAR_BLACK)
 
     # --- 행 주소/행 수 갱신 ----------------------------------------------------
@@ -208,6 +262,8 @@ def export_schedule_hwpx(
         for item, data in entries:
             if item.filename == SECTION_NAME:
                 data = new_section
+            elif item.filename == HEADER_NAME:
+                data = _with_export_colors(data, holiday_color, honored_off_color)
             compress = zipfile.ZIP_STORED if item.filename == "mimetype" else zipfile.ZIP_DEFLATED
             zf.writestr(item.filename, data, compress_type=compress)
     return out.getvalue()

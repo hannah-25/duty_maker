@@ -99,6 +99,7 @@ def test_generate_enables_pair_preference_for_trinity_a(monkeypatch):
         "nurses": [Nurse("우창희"), Nurse("정해주")],
         "duty_requests": [],
         "manual_overrides": {},
+        "prev_month_inputs": {"2026-08": {}},
     }
     captured = {}
     monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
@@ -118,3 +119,50 @@ def test_generate_enables_pair_preference_for_trinity_a(monkeypatch):
     schedule_router.generate(CurrentUser(TRINITY_A_WARD_ID, "admin", True))
 
     assert captured["trinity_a_pair_overlap"] is True
+
+
+def test_generate_blocks_without_prev_month_input(monkeypatch):
+    state = {
+        "year": 2026,
+        "month": 8,
+        "nurses": [Nurse("우창희")],
+        "duty_requests": [],
+        "manual_overrides": {},
+        "prev_month_inputs": {},  # 미확정
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+
+    with pytest.raises(Exception) as exc:
+        schedule_router.generate(CurrentUser("ward", "admin", True))
+    assert "직전 달" in str(exc.value)
+
+
+def test_generate_passes_prev_month_history_to_solver(monkeypatch):
+    state = {
+        "year": 2026,
+        "month": 8,
+        "nurses": [Nurse("우창희")],
+        "duty_requests": [],
+        "manual_overrides": {},
+        # 7월 마지막 날 N — 8월 lookback에 포함되는 날짜.
+        "prev_month_inputs": {"2026-08": {"우창희": {"2026-07-31": "N"}}},
+    }
+    captured = {}
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_requirements", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_infeasibility_messages", lambda *_: [])
+    monkeypatch.setattr(schedule_router, "_schedule_out", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_solver_settings", lambda *_: {})
+
+    def fake_generate(*_args, **kwargs):
+        captured["history"] = kwargs["history"]
+        return ScheduleResult(feasible=False)
+
+    monkeypatch.setattr(schedule_router, "generate_schedule", fake_generate)
+
+    schedule_router.generate(CurrentUser("ward", "admin", True))
+
+    assert captured["history"] == {("우창희", date(2026, 7, 31)): ShiftType.N}

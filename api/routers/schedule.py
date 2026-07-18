@@ -11,6 +11,8 @@ from api.schemas import (
     ChecklistItemOut,
     ManualAssignmentIn,
     NurseStatsOut,
+    PrevMonthIn,
+    PrevMonthOut,
     PublishIn,
     RegenerateApplyIn,
     RegeneratePreviewIn,
@@ -18,14 +20,23 @@ from api.schemas import (
     ScheduleOut,
     ScheduleRequestOut,
 )
-from api.state_store import load_ward_state, resolve_ward_settings, save_ward_state
+from api.state_store import (
+    load_ward_state,
+    prev_month_confirmed,
+    prev_month_history,
+    resolve_ward_settings,
+    save_ward_state,
+    staffing_signature,
+)
 from core.models import (
     DayRequirement,
     DutyRequest,
     ShiftRequirement,
     ShiftType,
     build_month_requirements,
+    lookback_dates,
     month_dates,
+    month_key,
 )
 from core.solver import _split_duty_requests, generate_schedule
 from core.validator import validate_schedule
@@ -300,9 +311,13 @@ def _checklist_out(report, ss: dict, result) -> list[ChecklistItemOut]:
         )
         for row in rows
     ]
+    year = int(ss.get("year", 2026))
+    month = int(ss.get("month", 7))
     nurse_names = {nurse.name for nurse in ss.get("nurses", [])}
     forced = [
-        req for req in ss.get("duty_requests", []) if _is_active(req) and req.nurse_name in nurse_names
+        req
+        for req in _requests_for_month(ss, nurse_names, year, month)
+        if _is_active(req)
     ]
     if forced:
         dropped = len(result.dropped_duty_requests)
@@ -361,7 +376,7 @@ def _schedule_out(ss: dict, user: CurrentUser) -> ScheduleOut:
     if not user.is_admin:
         return out
 
-    all_requests = ss.get("duty_requests", [])
+    all_requests = _requests_for_month(ss, set(out.nurse_names), year, month)
     ignored = [req for req in all_requests if not _is_active(req)]
     # 보조 인력 희망 신청은 표에 그대로 찍히므로 반영으로 집계한다.
     out.checklist = _checklist_out(report, ss, result)
@@ -388,6 +403,11 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
 
     year = int(ss.get("year", 2026))
     month = int(ss.get("month", 7))
+    if not prev_month_confirmed(ss, year, month):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "직전 달 근무를 먼저 입력하세요. '직전 달' 탭에서 지난달 마지막 근무를 저장해야 합니다.",
+        )
     requirements = _requirements(ss, year, month)
     off_target = _off_target(ss, year, month)
     nurse_names = {nurse.name for nurse in nurses}
@@ -398,6 +418,7 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
         month,
         requirements,
         off_target,
+        history=prev_month_history(ss, year, month),
         duty_requests=duty_requests,
         time_limit_seconds=60.0,
         settings=_solver_settings(ss, user),
@@ -407,6 +428,9 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
         result.infeasible_categories = _infeasibility_messages(ss, result.infeasible_categories)
     ss["schedule_result"] = result
     ss["result_published"] = False
+    ss.setdefault("schedule_signatures", {})[month_key(year, month)] = staffing_signature(
+        ss, year, month
+    )
     _bump_revision(ss)
     save_ward_state(user.ward_id, ss)
     return _schedule_out(ss, user)
@@ -479,6 +503,7 @@ def regenerate_preview(
     fixed.update(manual)
     candidate = generate_schedule(
         ss.get("nurses", []), year, month, _requirements(ss, year, month), _off_target(ss, year, month),
+        history=prev_month_history(ss, year, month),
         duty_requests=_requests_for_month(ss, {n.name for n in ss.get("nurses", [])}, year, month),
         time_limit_seconds=60.0, settings=_solver_settings(ss, user), fixed_assignments=fixed,
     )
@@ -544,3 +569,60 @@ def publish(body: PublishIn, user: CurrentUser = Depends(require_admin)) -> Sche
     ss["result_published"] = body.published
     save_ward_state(user.ward_id, ss)
     return _schedule_out(ss, user)
+
+
+def _prev_month_out(ss: dict, year: int, month: int) -> PrevMonthOut:
+    key = month_key(year, month)
+    dates = [day.isoformat() for day in lookback_dates(year, month, 5)]
+    date_set = set(dates)
+    stored = (ss.get("prev_month_inputs") or {}).get(key, {})
+    nurse_names = [nurse.name for nurse in ss.get("nurses", []) if not nurse.is_helper]
+    values = {
+        name: {iso: shift for iso, shift in (stored.get(name) or {}).items() if iso in date_set}
+        for name in nurse_names
+    }
+    return PrevMonthOut(
+        year=year,
+        month=month,
+        dates=dates,
+        nurse_names=nurse_names,
+        values=values,
+        confirmed=key in (ss.get("prev_month_inputs") or {}),
+    )
+
+
+@router.get("/prev-month", response_model=PrevMonthOut)
+def get_prev_month(user: CurrentUser = Depends(require_admin)) -> PrevMonthOut:
+    ss = load_ward_state(user.ward_id)
+    return _prev_month_out(ss, int(ss.get("year", 2026)), int(ss.get("month", 7)))
+
+
+@router.put("/prev-month", response_model=PrevMonthOut)
+def put_prev_month(
+    body: PrevMonthIn, user: CurrentUser = Depends(require_admin)
+) -> PrevMonthOut:
+    ss = load_ward_state(user.ward_id)
+    year, month = int(ss.get("year", 2026)), int(ss.get("month", 7))
+    valid_dates = {day.isoformat() for day in lookback_dates(year, month, 5)}
+    nurse_names = {nurse.name for nurse in ss.get("nurses", []) if not nurse.is_helper}
+    cleaned: dict[str, dict[str, str]] = {}
+    for name, days in (body.values or {}).items():
+        if name not in nurse_names:
+            continue
+        row: dict[str, str] = {}
+        for iso, raw_shift in (days or {}).items():
+            if iso not in valid_dates:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "직전 달 날짜 범위를 벗어난 셀이 있습니다.")
+            if raw_shift in (None, "", "O"):
+                continue  # 오프는 기본값이라 저장하지 않는다(빈칸 = 오프).
+            try:
+                shift = ShiftType(raw_shift)
+            except ValueError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "지원하지 않는 근무 코드입니다.") from exc
+            row[iso] = shift.value
+        if row:
+            cleaned[name] = row
+    # 키를 기록하면(빈 dict라도) '확정'으로 간주된다 — 전원 오프인 첫 달도 통과.
+    ss.setdefault("prev_month_inputs", {})[month_key(year, month)] = cleaned
+    save_ward_state(user.ward_id, ss)
+    return _prev_month_out(ss, year, month)

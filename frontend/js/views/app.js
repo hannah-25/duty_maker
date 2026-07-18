@@ -3,6 +3,7 @@ import { state, resetAuth, resetWard } from "../state.js";
 import { navigateTo, wardSelectPath } from "../router.js";
 import { onClickBusy } from "../ui.js";
 import { renderAccounts } from "./accounts.js";
+import { renderPrevMonth } from "./prev-month.js";
 import { renderRequirements } from "./requirements.js";
 import { renderRequests } from "./requests.js";
 import { renderRoster } from "./roster.js";
@@ -12,6 +13,7 @@ const ADMIN_TABS = [
   { key: "roster", label: "명단", render: renderRoster },
   { key: "requirements", label: "인원·규칙", render: renderRequirements },
   { key: "requests", label: "근무 신청", render: renderRequests },
+  { key: "prev-month", label: "직전 달", render: renderPrevMonth },
   { key: "result", label: "결과", render: renderScheduleResult },
   { key: "accounts", label: "계정", render: renderAccounts },
 ];

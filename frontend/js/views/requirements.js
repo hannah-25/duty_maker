@@ -159,17 +159,17 @@ async function save(container, { silent = false } = {}) {
       current.selected_holidays = [];
       current.date_overrides = [];
     }
-    [current, settings] = await Promise.all([
-      api.putRequirements({
-        year: current.year,
-        month: current.month,
-        weekday_template: current.weekday_template,
-        weekend_template: current.weekend_template,
-        selected_holidays: current.selected_holidays,
-        date_overrides: current.date_overrides,
-      }),
-      api.putSettings(settings),
-    ]);
+    // Both endpoints persist the ward's full state. Save sequentially so the
+    // settings request cannot overwrite the just-saved holiday selection.
+    current = await api.putRequirements({
+      year: current.year,
+      month: current.month,
+      weekday_template: current.weekday_template,
+      weekend_template: current.weekend_template,
+      selected_holidays: current.selected_holidays,
+      date_overrides: current.date_overrides,
+    });
+    settings = await api.putSettings(settings);
     if (status && !silent) status.textContent = "저장되었습니다.";
   } catch (err) {
     if (status) status.textContent = `오류: ${err.message}`;

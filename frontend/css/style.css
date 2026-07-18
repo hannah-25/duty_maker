@@ -1756,3 +1756,49 @@ kbd {
   .member-duty-group { display: block; font-size: .62rem; }
   .member-duty-group > strong { display: block; }
 }
+
+/* 직전 달 근무 입력 */
+.prev-month-banner {
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.9rem;
+  margin: 0.9rem 0;
+  font-size: 0.88rem;
+}
+.prev-month-banner.ok {
+  background: var(--brand-50);
+  color: var(--brand-700);
+}
+.prev-month-banner.warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+/* 입력된 근무 값 칩 (신청 표 조작감을 그대로 재사용) */
+.prev-month-editor .prev-month-chip {
+  display: inline-block;
+  min-width: 1.6rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm);
+  background: var(--brand-100);
+  color: var(--brand-700);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.export-summary-fields {
+  margin: 0;
+  border: 1px solid var(--line, #d1d5db);
+  border-radius: .5rem;
+  padding: .45rem .65rem;
+}
+
+.export-summary-fields summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.export-summary-fields__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem .75rem;
+  margin-top: .55rem;
+}

@@ -204,6 +204,11 @@ def month_dates(year: int, month: int) -> list[date]:
     return [date(year, month, d) for d in range(1, n_days + 1)]
 
 
+def month_key(year: int, month: int) -> str:
+    """월별 보관용 키 ("YYYY-MM")."""
+    return f"{year}-{month:02d}"
+
+
 def build_month_requirements(
     year: int,
     month: int,

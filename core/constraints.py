@@ -25,6 +25,7 @@ MONDAY_TARGET_MULTIPLIER = 3  # 월요일 목표 미달 가중 (최우선)
 WEIGHT_N_ISOLATED = 35
 WEIGHT_S_DAILY = 30  # 하루 S 2명 이상
 WEIGHT_NIGHT_SOFT_CONSECUTIVE = 25
+WEIGHT_NIGHT_OFF_RETURN = 25  # 나이트 후 휴식이 끝난 첫 근무가 다시 나이트인 패턴 회피
 WEIGHT_WORKDAY_STREAK = 25  # 연속 근무 5일 이상 (기본 3~4일 선호)
 WEIGHT_OFF_STREAK = 25  # 연속 오프 4일 이상 (2~3일씩 분산 선호)
 WEIGHT_WEEKEND_OFF_MIN = 70  # 토·일 통주말 오프 최소 월 1회 (전원 커버)
@@ -503,6 +504,7 @@ class ScheduleModel:
         self._soft_s_daily_cap()
         self._soft_senior_e_cap()
         self._soft_night_consecutive_preference()
+        self._soft_avoid_night_after_night_off()
         self._soft_workday_streak()
         self._soft_off_streak()
         self._soft_weekend_off_pair()
@@ -599,6 +601,32 @@ class ScheduleModel:
                 viol = self.model.NewIntVar(0, window, f"n_soft_viol_{nurse.name}_{i}")
                 self.model.Add(viol >= n_sum - limit)
                 self.penalties.append(("night_soft_consecutive", WEIGHT_NIGHT_SOFT_CONSECUTIVE, viol))
+
+    def _soft_avoid_night_after_night_off(self):
+        """나이트 뒤 휴식이 끝난 첫 근무가 다시 N인 패턴을 피한다.
+
+        N O...O N (O에는 연차 포함)에서 마지막 N은 휴식 뒤의 첫 근무이므로
+        벌점을 준다. 나이트 블록 종료 뒤 2일 휴식은 Tier 1에서 이미 보장하며,
+        이 규칙은 휴식이 더 길어지는 경우도 함께 다룬다.
+        """
+        for nurse in self.nurses:
+            for start_index, start_day in enumerate(self.all_days[:-1]):
+                before_night = self.val(nurse.name, start_day, ShiftType.N)
+                for end_index in range(start_index + 2, len(self.all_days)):
+                    end_day = self.all_days[end_index]
+                    if (nurse.name, end_day) not in self.shift_vars:
+                        continue
+                    rest_days = self.all_days[start_index + 1 : end_index]
+                    terms = [
+                        before_night,
+                        *(self.rest_val(nurse.name, day) for day in rest_days),
+                        self.val(nurse.name, end_day, ShiftType.N),
+                    ]
+                    violation = self.model.NewBoolVar(
+                        f"night_off_return_{nurse.name}_{start_day.isoformat()}_{end_day.isoformat()}"
+                    )
+                    self.model.Add(violation >= sum(terms) - (len(terms) - 1))
+                    self.penalties.append(("night_off_return", WEIGHT_NIGHT_OFF_RETURN, violation))
 
     def _soft_workday_streak(self, window: int = 5):
         """연속 근무 5일 이상에 벌점 (기본 3~4일 선호). 6일 이상은 하드로 금지된다.
