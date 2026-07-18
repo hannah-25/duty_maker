@@ -82,3 +82,31 @@ def test_trinity_pair_preference_is_limited_to_trinity_a(monkeypatch):
 
     assert trinity["trinity_a_pair_overlap"] is True
     assert "trinity_a_pair_overlap" not in other
+
+
+def test_generate_enables_pair_preference_for_trinity_a(monkeypatch):
+    state = {
+        "year": 2026,
+        "month": 8,
+        "nurses": [Nurse("우창희"), Nurse("정해주")],
+        "duty_requests": [],
+        "manual_overrides": {},
+    }
+    captured = {}
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_requirements", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_infeasibility_messages", lambda *_: [])
+    monkeypatch.setattr(schedule_router, "_schedule_out", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_solver_settings", lambda *_: {"trinity_a_pair_overlap": True})
+
+    def fake_generate(*_args, **kwargs):
+        captured.update(kwargs["settings"])
+        return ScheduleResult(feasible=False)
+
+    monkeypatch.setattr(schedule_router, "generate_schedule", fake_generate)
+
+    schedule_router.generate(CurrentUser(TRINITY_A_WARD_ID, "admin", True))
+
+    assert captured["trinity_a_pair_overlap"] is True

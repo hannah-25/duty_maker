@@ -428,7 +428,7 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
         off_target,
         duty_requests=duty_requests,
         time_limit_seconds=60.0,
-        settings=resolve_ward_settings(ss),
+        settings=_solver_settings(ss, user),
         fixed_assignments=_manual_assignments(ss, year, month),
     )
     if not result.feasible:
