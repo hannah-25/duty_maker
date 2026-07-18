@@ -149,3 +149,20 @@ def test_xlsx_export_smoke(monkeypatch):
     assert ".xlsx" in response.headers["content-disposition"]
     workbook = openpyxl.load_workbook(BytesIO(response.content))
     assert workbook.sheetnames
+
+
+def test_firestore_payload_roundtrips_schedule_signatures():
+    payload = {
+        "schedule_signatures": {
+            "2026-08": {
+                "weekday": [[3, 5, 4], [2, 4, 3], [3, 4, 3]],
+                "weekend": [[2, 4, 4], [2, 4, 3], [3, 3, 3]],
+                "holidays": ["2026-08-17"],
+                "overrides": [],
+            }
+        }
+    }
+
+    firestore_form = _to_firestore_payload(payload)
+    assert not _has_nested_array(firestore_form["schedule_signatures"])
+    assert _from_firestore_payload(firestore_form)["schedule_signatures"] == payload["schedule_signatures"]

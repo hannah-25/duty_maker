@@ -309,6 +309,37 @@ def _result_assignments_from_firestore(result: dict | None) -> dict | None:
     return result
 
 
+
+def _schedule_signatures_to_firestore(signatures: dict | None) -> dict | None:
+    """Encode signature template rows without Firestore's forbidden nested arrays."""
+    if not signatures:
+        return signatures
+    converted: dict = {}
+    for month_key, signature in signatures.items():
+        row = dict(signature or {})
+        for template_key in ("weekday", "weekend"):
+            rows = row.get(template_key)
+            if isinstance(rows, list):
+                row[template_key] = {
+                    str(index): values for index, values in enumerate(rows)
+                }
+        converted[month_key] = row
+    return converted
+
+
+def _schedule_signatures_from_firestore(signatures: dict | None) -> dict | None:
+    if not signatures:
+        return signatures
+    converted: dict = {}
+    for month_key, signature in signatures.items():
+        row = dict(signature or {})
+        for template_key in ("weekday", "weekend"):
+            rows = row.get(template_key)
+            if isinstance(rows, dict):
+                row[template_key] = [rows[key] for key in sorted(rows, key=int)]
+        converted[month_key] = row
+    return converted
+
 def _to_firestore_payload(payload: dict) -> dict:
     """Convert JSON-friendly state into Firestore-friendly state."""
     converted = dict(payload)
@@ -319,6 +350,9 @@ def _to_firestore_payload(payload: dict) -> dict:
                 for row in converted[key]
             ]
     converted["schedule_result"] = _result_assignments_to_firestore(converted.get("schedule_result"))
+    converted["schedule_signatures"] = _schedule_signatures_to_firestore(
+        converted.get("schedule_signatures")
+    )
     schedules = converted.get("schedules_by_month")
     if schedules:
         converted["schedules_by_month"] = {
@@ -337,6 +371,9 @@ def _to_firestore_payload(payload: dict) -> dict:
 def _from_firestore_payload(payload: dict) -> dict:
     converted = dict(payload)
     converted["schedule_result"] = _result_assignments_from_firestore(converted.get("schedule_result"))
+    converted["schedule_signatures"] = _schedule_signatures_from_firestore(
+        converted.get("schedule_signatures")
+    )
     schedules = converted.get("schedules_by_month")
     if schedules:
         converted["schedules_by_month"] = {
