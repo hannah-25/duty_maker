@@ -267,6 +267,34 @@ def _split_requests(payload: dict) -> tuple[dict, dict[str, dict]]:
     return rest, requests
 
 
+def _result_assignments_to_firestore(result: dict | None) -> dict | None:
+    """배정을 배열-of-배열 → 배열-of-객체로 바꾼다.
+
+    Firestore는 배열 안에 배열을 직접 담지 못하므로 저장 전 변환한다.
+    schedule_result와 schedule_previews의 각 result가 동일한 구조라 함께 쓴다.
+    """
+    if not result or "assignments" not in result:
+        return result
+    result = dict(result)
+    result["assignments"] = [
+        {"nurse_name": name, "day": day, "shift": shift}
+        for name, day, shift in result["assignments"]
+    ]
+    return result
+
+
+def _result_assignments_from_firestore(result: dict | None) -> dict | None:
+    """배정을 배열-of-객체 → 배열-of-배열로 되돌린다 (_result_from_dict가 기대하는 형태)."""
+    if not result or "assignments" not in result:
+        return result
+    result = dict(result)
+    result["assignments"] = [
+        [row["nurse_name"], row["day"], row["shift"]] if isinstance(row, dict) else row
+        for row in result["assignments"]
+    ]
+    return result
+
+
 def _to_firestore_payload(payload: dict) -> dict:
     """Convert JSON-friendly state into Firestore-friendly state."""
     converted = dict(payload)
@@ -276,29 +304,25 @@ def _to_firestore_payload(payload: dict) -> dict:
                 {"minimum": row[0], "maximum": row[1], "target": row[2]}
                 for row in converted[key]
             ]
-    result = converted.get("schedule_result")
-    if result and "assignments" in result:
-        result = dict(result)
-        result["assignments"] = [
-            {"nurse_name": name, "day": day, "shift": shift}
-            for name, day, shift in result["assignments"]
-        ]
-        converted["schedule_result"] = result
+    converted["schedule_result"] = _result_assignments_to_firestore(converted.get("schedule_result"))
+    previews = converted.get("schedule_previews")
+    if previews:
+        converted["schedule_previews"] = {
+            preview_id: {**row, "result": _result_assignments_to_firestore(row.get("result"))}
+            for preview_id, row in previews.items()
+        }
     return converted
 
 
 def _from_firestore_payload(payload: dict) -> dict:
     converted = dict(payload)
-    result = converted.get("schedule_result")
-    if result and "assignments" in result:
-        result = dict(result)
-        result["assignments"] = [
-            [row["nurse_name"], row["day"], row["shift"]]
-            if isinstance(row, dict)
-            else row
-            for row in result["assignments"]
-        ]
-        converted["schedule_result"] = result
+    converted["schedule_result"] = _result_assignments_from_firestore(converted.get("schedule_result"))
+    previews = converted.get("schedule_previews")
+    if previews:
+        converted["schedule_previews"] = {
+            preview_id: {**row, "result": _result_assignments_from_firestore(row.get("result"))}
+            for preview_id, row in previews.items()
+        }
     return converted
 
 

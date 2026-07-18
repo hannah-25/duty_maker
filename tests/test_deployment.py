@@ -8,7 +8,12 @@ import api.main as main_module
 import api.routers.exports as exports_module
 from api.deps import CurrentUser, get_current_user
 from core.models import Nurse, ScheduleResult, ShiftType, month_dates
-from core.persistence import storage_backend
+from core.persistence import (
+    _from_firestore_payload,
+    _to_firestore_payload,
+    serialize_state,
+    storage_backend,
+)
 
 
 def test_storage_backend_defaults_to_local(monkeypatch):
@@ -42,6 +47,50 @@ def test_readiness_failure_returns_503(monkeypatch):
     response = client.get("/ready")
     assert response.status_code == 503
     assert response.json() == {"detail": "Storage backend is not ready"}
+
+
+def _has_nested_array(value) -> bool:
+    """Firestore rejects an array whose elements are themselves arrays."""
+    if isinstance(value, list):
+        if any(isinstance(item, list) for item in value):
+            return True
+        return any(_has_nested_array(item) for item in value)
+    if isinstance(value, dict):
+        return any(_has_nested_array(item) for item in value.values())
+    return False
+
+
+def test_firestore_payload_roundtrips_schedule_previews():
+    year, month = 2026, 7
+    nurse = Nurse("preview-nurse")
+    result = ScheduleResult(
+        feasible=True,
+        assignments={(nurse.name, day): ShiftType.O for day in month_dates(year, month)},
+    )
+    state = {
+        "year": year,
+        "month": month,
+        "nurses": [nurse],
+        "schedule_result": result,
+        "schedule_previews": {
+            "abc123": {
+                "base_revision": 3,
+                "selected_keys": [f"{nurse.name}|{month_dates(year, month)[0].isoformat()}"],
+                "result": result,
+            }
+        },
+    }
+    payload = serialize_state(state)
+
+    firestore_form = _to_firestore_payload(payload)
+    # The reason schedule_previews needed conversion at all: Firestore rejects nested arrays.
+    assert not _has_nested_array(firestore_form["schedule_previews"])
+
+    restored = _from_firestore_payload(firestore_form)
+    assert restored["schedule_previews"]["abc123"]["result"]["assignments"] == (
+        payload["schedule_previews"]["abc123"]["result"]["assignments"]
+    )
+    assert restored["schedule_previews"]["abc123"]["base_revision"] == 3
 
 
 def test_xlsx_export_smoke(monkeypatch):
