@@ -12,7 +12,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY api ./api
+COPY core ./core
+COPY frontend ./frontend
+COPY templates ./templates
 RUN mkdir -p data && chown -R app:app /app
 
 USER app
