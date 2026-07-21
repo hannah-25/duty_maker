@@ -200,5 +200,8 @@ function firstDay() {
 }
 
 function lastDay() {
-  return new Date(current.year, current.month, 0).toISOString().slice(0, 10);
+  // toISOString()은 UTC로 변환하므로 UTC+ 시간대(한국 등)에서는 월 마지막 날이
+  // 하루 앞당겨진다. 로컬 날짜 구성요소를 직접 조합해야 한다.
+  const d = new Date(current.year, current.month, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

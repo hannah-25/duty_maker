@@ -20,10 +20,16 @@ let dragIndex = null;
 let targetYear = null;
 let targetMonth = null;
 
+function toLocalISODate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function monthBound(which) {
   if (!targetYear || !targetMonth) return undefined;
   if (which === "first") return `${targetYear}-${String(targetMonth).padStart(2, "0")}-01`;
-  return new Date(targetYear, targetMonth, 0).toISOString().slice(0, 10);
+  // toISOString()은 UTC로 변환하므로 UTC+ 시간대(한국 등)에서는 월 마지막 날이
+  // 하루 앞당겨진다. 로컬 날짜 구성요소를 직접 조합해야 한다.
+  return toLocalISODate(new Date(targetYear, targetMonth, 0));
 }
 
 function shiftsToStr(shifts) {
@@ -331,14 +337,14 @@ function helperDetail(nurse, container) {
         });
       }
       body.querySelector(".hs-add").addEventListener("click", () => {
-        const d = monthBound("first") ?? new Date().toISOString().slice(0, 10);
+        const d = monthBound("first") ?? toLocalISODate(new Date());
         let key = d;
         let i = 1;
         while (nurse.helper_shifts[key] !== undefined) {
           // 같은 날짜가 이미 있으면 다음 빈 날짜를 찾는다.
           const next = new Date(`${d}T00:00:00`);
           next.setDate(next.getDate() + i);
-          key = next.toISOString().slice(0, 10);
+          key = toLocalISODate(next);
           i += 1;
         }
         nurse.helper_shifts[key] = nurse.allowed_shifts[0] ?? "D";
