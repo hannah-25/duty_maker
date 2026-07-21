@@ -75,6 +75,35 @@ def test_manual_assignment_pins_cell_and_increments_revision(monkeypatch):
     assert result.revision == 4
 
 
+def test_manual_assignment_converts_excess_off_to_annual_leave(monkeypatch):
+    days = [date(2026, 7, d) for d in range(1, 32)]
+    # 7월 목표 오프(주말)는 8일. 이미 8일을 오프로 채워둔 상태에서 9번째 오프를
+    # 추가로 지정하면, 오프 상한 초과분은 오프가 아니라 연차로 저장돼야 한다.
+    assignments = {("Kim", d): ShiftType.D for d in days}
+    for d in days[:8]:
+        assignments[("Kim", d)] = ShiftType.O
+    new_off_day = days[8]
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 1, "manual_overrides": {},
+        "schedule_previews": {}, "nurses": [Nurse("Kim")], "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=True, assignments=assignments),
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(
+        schedule_router, "_schedule_out",
+        lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
+    )
+
+    schedule_router.update_assignment(
+        ManualAssignmentIn(nurse_name="Kim", date=new_off_day.isoformat(), shift="O", expected_revision=1),
+        CurrentUser("ward", "admin", True),
+    )
+
+    assert state["schedule_result"].assignments[("Kim", new_off_day)] == ShiftType.AL
+    assert state["manual_overrides"][f"Kim|{new_off_day.isoformat()}"] == "연차"
+
+
 def test_trinity_pair_preference_is_limited_to_trinity_a(monkeypatch):
     monkeypatch.setattr(schedule_router, "resolve_ward_settings", lambda _: {"weekday_charge_D": 2})
 

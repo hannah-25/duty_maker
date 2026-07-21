@@ -510,7 +510,7 @@ class ScheduleModel:
                 continue
             target = self.off_target.get(nurse.name, 0)
             o_count = sum(self.val(nurse.name, d, ShiftType.O) for d in self.current_days)
-            self._enforce(self.model.Add(o_count == target), lit)
+            self._enforce(self.model.Add(o_count <= target), lit)
 
     def apply_assumptions(self):
         """(진단 모드 전용) 모든 Tier1 카테고리를 True로 가정 (Infeasible 원인 진단용)."""

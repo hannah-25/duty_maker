@@ -458,6 +458,20 @@ def update_assignment(
         # 위반은 검증 리포트의 '일별 인원 기준' 경고로 관리자에게 표시된다.
         candidate_assignments = dict(result.assignments)
         candidate_assignments[key] = shift
+        if shift == ShiftType.O:
+            nurse = next((n for n in ss.get("nurses", []) if n.name == body.nurse_name), None)
+            # 나이트 전담은 오프 상한 대상이 아니므로(나이트 외 날이 전부 오프) 제외.
+            if nurse is not None and not getattr(nurse, "is_night_dedicated", False):
+                target = _off_target(ss, year, month).get(nurse.name, 0)
+                o_count = sum(
+                    1
+                    for d in month_dates(year, month)
+                    if candidate_assignments.get((nurse.name, d)) == ShiftType.O
+                )
+                # 오프가 목표를 넘기면 초과분은 오프가 아니라 연차로 기록한다.
+                if o_count > target:
+                    shift = ShiftType.AL
+                    candidate_assignments[key] = shift
         result.assignments = candidate_assignments
         overrides[override_key] = shift.value
     active_requests = [
