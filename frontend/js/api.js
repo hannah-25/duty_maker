@@ -19,9 +19,14 @@ function handleUnauthorized() {
 }
 
 async function readErrorDetail(res) {
-  let detail = res.statusText;
+  // HTTP/2, reverse proxies, and some platform 500 pages may omit statusText.
+  // Always return a user-visible message so callers never render an empty error banner.
+  let detail = res.statusText || `요청 처리에 실패했습니다. (HTTP ${res.status})`;
   try {
-    detail = (await res.json()).detail ?? detail;
+    const payload = await res.json();
+    if (typeof payload.detail === "string" && payload.detail.trim()) {
+      detail = payload.detail;
+    }
   } catch {
     /* response body wasn't JSON */
   }
