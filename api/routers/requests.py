@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.deps import CurrentUser, get_current_user, require_admin
 from api.schemas import (
+    DutyRequestBulkIn,
     DutyRequestCreate,
     DutyRequestOut,
     DutyRequestsOut,
@@ -106,6 +107,55 @@ def _replace_opposite_kind(
     ]
 
 
+def _same_request_bucket(
+    req: DutyRequest, nurse_name: str, day: date, kind: str, memo: str
+) -> bool:
+    """Match the request bucket replaced by quick entry in the UI."""
+    if req.nurse_name != nurse_name or req.day != day:
+        return False
+    request_kind = getattr(req, "kind", "prefer")
+    if kind == "avoid":
+        return request_kind == "avoid"
+    if memo:
+        return request_kind == "prefer" and bool(getattr(req, "memo", ""))
+    return request_kind == "prefer" and not bool(getattr(req, "memo", ""))
+
+
+def _apply_request_cells(
+    requests: list[DutyRequest],
+    cells: list[tuple[str, date]],
+    requested_shift: ShiftType,
+    kind: str,
+    memo: str,
+) -> list[DutyRequest]:
+    """Replace one request bucket per cell atomically after validation."""
+    result = list(requests)
+    for nurse_name, day in cells:
+        result = [
+            req
+            for req in result
+            if not (
+                _same_request_bucket(req, nurse_name, day, kind, memo)
+                or (
+                    req.nurse_name == nurse_name
+                    and req.day == day
+                    and getattr(req, "kind", "prefer") != kind
+                )
+            )
+        ]
+        result.append(
+            DutyRequest(
+                nurse_name=nurse_name,
+                day=day,
+                requested_shift=requested_shift,
+                kind=kind,
+                decision="force",
+                memo=memo,
+            )
+        )
+    return _dedupe(result)
+
+
 @router.get("", response_model=DutyRequestsOut)
 def get_requests(user: CurrentUser = Depends(get_current_user)) -> DutyRequestsOut:
     return _out(load_ward_state(user.ward_id), user)
@@ -148,6 +198,40 @@ def add_request(
                 memo=body.memo,
             ),
         ]
+    )
+    save_ward_state(user.ward_id, ss, requests_only=not user.is_admin)
+    return _out(ss, user)
+
+
+@router.post("/bulk", response_model=DutyRequestsOut)
+def add_requests_bulk(
+    body: DutyRequestBulkIn,
+    user: CurrentUser = Depends(get_current_user),
+) -> DutyRequestsOut:
+    """Apply quick-entry requests as one validated, all-or-nothing update."""
+    ss = load_ward_state(user.ward_id)
+    if ss.get("requests_locked") and not user.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "근무 신청이 마감되었습니다.")
+    if body.kind not in VALID_KINDS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "신청 유형이 올바르지 않습니다.")
+    try:
+        requested_shift = ShiftType(body.requested_shift)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "근무 코드가 올바르지 않습니다.")
+    if requested_shift not in VALID_REQUEST_SHIFTS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "신청할 수 없는 근무 코드입니다.")
+
+    names = set(_names(ss))
+    cells: list[tuple[str, date]] = []
+    for cell in body.cells:
+        nurse_name = cell.nurse_name.strip() if cell.nurse_name and user.is_admin else user.name
+        if nurse_name not in names:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "명단에 없는 이름입니다.")
+        day = _parse_date(cell.date, int(ss.get("year", 2026)), int(ss.get("month", 7)))
+        cells.append((nurse_name, day))
+
+    ss["duty_requests"] = _apply_request_cells(
+        list(ss.get("duty_requests", [])), cells, requested_shift, body.kind, body.memo
     )
     save_ward_state(user.ward_id, ss, requests_only=not user.is_admin)
     return _out(ss, user)

@@ -117,7 +117,11 @@ def load_ward_state(ward_id: str) -> dict:
     ss.setdefault("export_settings", {})
     ss.setdefault("schedules_by_month", {})
     ss.setdefault("published_by_month", {})
-    ss.setdefault("schedule_signatures", {})
+    # Older Firestore state can contain an explicit null for this field.
+    # setdefault() preserves an existing None, which makes schedule generation
+    # fail when it records the current month's signature.
+    if not isinstance(ss.get("schedule_signatures"), dict):
+        ss["schedule_signatures"] = {}
     ss.setdefault("prev_month_inputs", {})
     ss.setdefault("year", 2026)
     ss.setdefault("month", 7)

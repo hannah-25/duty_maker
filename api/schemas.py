@@ -161,6 +161,18 @@ class DutyRequestCreate(BaseModel):
     memo: str = ""
 
 
+class DutyRequestCellIn(BaseModel):
+    nurse_name: str | None = None
+    date: str
+
+
+class DutyRequestBulkIn(BaseModel):
+    cells: list[DutyRequestCellIn] = Field(min_length=1, max_length=200)
+    requested_shift: str
+    kind: str = "prefer"
+    memo: str = ""
+
+
 class DutyRequestUpdate(BaseModel):
     decision: str
 
@@ -222,11 +234,16 @@ class RegenerateApplyIn(BaseModel):
     preview_id: str = Field(min_length=1)
 
 
-class ManualAssignmentIn(BaseModel):
+class ScheduleCellEditIn(BaseModel):
     nurse_name: str = Field(min_length=1)
     date: str
-    shift: str | None = None
+    shift: str = Field(min_length=1)
+    pinned: bool = False
+
+
+class ScheduleEditBatchIn(BaseModel):
     expected_revision: int = Field(ge=0)
+    edits: list[ScheduleCellEditIn] = Field(min_length=1)
 
 
 class ScheduleRequestOut(BaseModel):

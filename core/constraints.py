@@ -20,7 +20,6 @@ MODEL_SHIFTS = (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S, ShiftType.O,
 # 소프트 벌점 가중치 (상대적 우선순위가 중요)
 WEIGHT_TIER3_EXCEPTION = 1000
 WEIGHT_DUTY_REQUEST = 5000
-WEIGHT_TARGET_STAFFING = 30  # 목표인원(D4/E3) 미달, 1명당
 MONDAY_TARGET_MULTIPLIER = 3  # 월요일 목표 미달 가중 (최우선)
 WEIGHT_N_ISOLATED = 35
 WEIGHT_S_DAILY = 30  # 하루 S 2명 이상
@@ -422,6 +421,11 @@ class ScheduleModel:
             self._enforce(self.model.Add(e_total <= req.E.maximum), lit)
             self._enforce(self.model.Add(n_total >= req.N.minimum), lit)
             self._enforce(self.model.Add(n_total <= req.N.maximum), lit)
+            # The ward's configured staffing number is mandatory; a schedule
+            # that misses it must be infeasible rather than merely penalized.
+            self._enforce(self.model.Add(d_total + s_total == req.D.target), lit)
+            self._enforce(self.model.Add(e_total == req.E.target), lit)
+            self._enforce(self.model.Add(n_total == req.N.target), lit)
 
     def _rule_charge_placement(self):
         # S는 차지 요건 대상에서 제외 (S 근무 시간대는 이미 D 또는 E 차지간호사가 있고,
@@ -524,7 +528,6 @@ class ScheduleModel:
     def add_tier2_soft_constraints(self, duty_requests: list[DutyRequest] | None = None):
         duty_requests = duty_requests or []
         extra_al_allowance = self._extra_al_allowance(duty_requests)
-        self._soft_target_staffing()
         self._soft_avoid_isolated_night()
         self._soft_s_daily_cap()
         self._soft_senior_e_cap()
@@ -554,30 +557,6 @@ class ScheduleModel:
             shortfall = self.model.NewIntVar(0, len(self.current_days), f"off_shortfall_{nurse.name}")
             self.model.Add(shortfall >= target - o_count)
             self.penalties.append(("off_shortfall", WEIGHT_OFF_SHORTFALL, shortfall))
-
-    def _soft_target_staffing(self):
-        """매일(주말 포함) 목표인원(D4/E3) 달성 유도. 월요일 가중치 최상."""
-        for day in self.current_days:
-            req = self.requirements[day]
-            weight = WEIGHT_TARGET_STAFFING * (
-                MONDAY_TARGET_MULTIPLIER if day.weekday() == 0 else 1
-            )
-            d_total = sum(self.val(n.name, day, ShiftType.D) for n in self.nurses)
-            e_total = sum(self.val(n.name, day, ShiftType.E) for n in self.nurses)
-            n_total = sum(self.val(n.name, day, ShiftType.N) for n in self.nurses)
-            s_total = sum(self.val(n.name, day, ShiftType.S) for n in self.nurses)
-            for label, actual, target in (
-                ("D", d_total + s_total, req.D.target),
-                ("E", e_total + s_total, req.E.target),
-                ("N", n_total, req.N.target),
-            ):
-                if target <= 0:
-                    continue
-                shortfall = self.model.NewIntVar(
-                    0, target, f"target_shortfall_{day.isoformat()}_{label}"
-                )
-                self.model.Add(shortfall >= target - actual)
-                self.penalties.append(("target_staffing_shortfall", weight, shortfall))
 
     def _soft_avoid_isolated_night(self):
         """나이트는 왠만하면 2~3일씩 붙여서 배정하고, 단독 1일짜리 나이트는 피한다."""

@@ -9,7 +9,6 @@ from api.deps import CurrentUser, get_current_user, require_admin
 from api.schemas import (
     AssistantRowOut,
     ChecklistItemOut,
-    ManualAssignmentIn,
     NurseStatsOut,
     PrevMonthIn,
     PrevMonthOut,
@@ -17,6 +16,7 @@ from api.schemas import (
     RegenerateApplyIn,
     RegeneratePreviewIn,
     ScheduleAssignmentOut,
+    ScheduleEditBatchIn,
     ScheduleOut,
     ScheduleRequestOut,
 )
@@ -431,9 +431,9 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
     return _schedule_out(ss, user)
 
 
-@router.patch("/assignment", response_model=ScheduleOut)
-def update_assignment(
-    body: ManualAssignmentIn, user: CurrentUser = Depends(require_admin)
+@router.patch("/assignments", response_model=ScheduleOut)
+def update_assignments(
+    body: ScheduleEditBatchIn, user: CurrentUser = Depends(require_admin)
 ) -> ScheduleOut:
     ss = load_ward_state(user.ward_id)
     result = ss.get("schedule_result")
@@ -442,24 +442,22 @@ def update_assignment(
     if body.expected_revision != _revision(ss):
         raise HTTPException(status.HTTP_409_CONFLICT, "근무표가 변경되었습니다. 새로고침 후 다시 시도하세요.")
     year, month = int(ss["year"]), int(ss["month"])
-    selected = _validate_selected_cells(ss, [body], year, month)
-    key = next(iter(selected))
-    override_key = f"{body.nurse_name}|{body.date}"
+    _validate_selected_cells(ss, body.edits, year, month)
     overrides = ss.setdefault("manual_overrides", {})
-    if body.shift is None:
-        overrides.pop(override_key, None)
-    else:
+    candidate_assignments = dict(result.assignments)
+    for edit in body.edits:
+        key = (edit.nurse_name, date.fromisoformat(edit.date))
+        override_key = f"{edit.nurse_name}|{edit.date}"
         try:
-            shift = ShiftType(body.shift)
+            shift = ShiftType(edit.shift)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "지원하지 않는 근무 코드입니다.") from exc
         # 수동 편집은 한 칸씩(증분) 이뤄지므로, 인원 하한·상한은 여기서 하드로
         # 막지 않는다(그러면 다중 칸 재배치의 중간 상태가 전부 거부된다).
         # 위반은 검증 리포트의 '일별 인원 기준' 경고로 관리자에게 표시된다.
-        candidate_assignments = dict(result.assignments)
         candidate_assignments[key] = shift
         if shift == ShiftType.O:
-            nurse = next((n for n in ss.get("nurses", []) if n.name == body.nurse_name), None)
+            nurse = next((n for n in ss.get("nurses", []) if n.name == edit.nurse_name), None)
             # 나이트 전담은 오프 상한 대상이 아니므로(나이트 외 날이 전부 오프) 제외.
             if nurse is not None and not getattr(nurse, "is_night_dedicated", False):
                 target = _off_target(ss, year, month).get(nurse.name, 0)
@@ -472,8 +470,13 @@ def update_assignment(
                 if o_count > target:
                     shift = ShiftType.AL
                     candidate_assignments[key] = shift
-        result.assignments = candidate_assignments
-        overrides[override_key] = shift.value
+        # 고정(pin) 여부는 수정 자체와 별개다 — 우클릭으로 명시한 셀만 다음 재생성에서도
+        # 유지되고, 나머지는 값만 바뀔 뿐 재생성 시 다시 계산될 수 있다.
+        if edit.pinned:
+            overrides[override_key] = shift.value
+        else:
+            overrides.pop(override_key, None)
+    result.assignments = candidate_assignments
     active_requests = [
         request for request in _requests_for_month(
             ss, {nurse.name for nurse in ss.get("nurses", [])}, year, month

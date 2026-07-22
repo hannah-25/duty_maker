@@ -19,6 +19,8 @@ const WEEKDAY_KR = ["일", "월", "화", "수", "목", "금", "토"];
 const OTHER_REASONS = ["예비군", "보수교육", "교육", "기타"];
 
 let current = null;
+let removeGridDragListeners = null;
+let sheetReturnFocusKey = "";
 let editor = {
   focusedKey: "",
   anchorKey: "",
@@ -47,13 +49,19 @@ export async function renderRequests(container) {
 }
 
 function paint(container) {
+  const wasMobileSheetOpen = container.querySelector(".request-sheet.is-open");
+  const previousSheetFocusKey = wasMobileSheetOpen ? sheetReturnFocusKey : "";
+  cancelGridDrag();
+  sheetReturnFocusKey = "";
   const previousScroll = container.querySelector(".request-editor .schedule-scroll");
   const previousScrollLeft = previousScroll?.scrollLeft ?? 0;
   const previousScrollTop = previousScroll?.scrollTop ?? 0;
   document.body.classList.remove("has-request-sheet");
   container.innerHTML = `
-    <h2 style="font-size:1.15rem">근무 신청</h2>
-    <p class="caption">${current.year}년 ${current.month}월 신청을 관리합니다.</p>
+    <header class="page-header">
+      <h2>근무 신청</h2>
+      <p class="caption">${current.year}년 ${current.month}월 신청을 관리합니다.</p>
+    </header>
 
     ${current.is_admin ? adminLockBlock() : lockNotice()}
 
@@ -97,9 +105,12 @@ function paint(container) {
       <div class="schedule-scroll">
         <table class="request-grid" aria-label="${current.month}월 근무 신청 표">
           <thead>
-            <tr>
-              <th>이름</th>
-              ${monthDateStrings().map((date) => `<th class="${isWeekend(date) ? "col-holiday" : ""}">${dayLabel(date)}</th>`).join("")}
+            <tr class="date-month-row">
+              <th rowspan="2">이름</th>
+              <th class="date-month-label" colspan="${monthDateStrings().length}">${current.month}월</th>
+            </tr>
+            <tr class="date-header-row">
+              ${monthDateStrings().map((date) => `<th class="${isWeekend(date) ? "col-holiday" : ""}">${dateHeader(date)}</th>`).join("")}
             </tr>
           </thead>
           <tbody>${requestGridRows()}</tbody>
@@ -132,6 +143,7 @@ function paint(container) {
       nextScroll.scrollTop = previousScrollTop;
     });
   }
+  if (previousSheetFocusKey) restoreMobileDayFocus(container, previousSheetFocusKey);
 }
 
 function bindEditor(container) {
@@ -176,6 +188,9 @@ function bindEditor(container) {
   for (const closeButton of container.querySelectorAll("[data-sheet-close]")) {
     closeButton.addEventListener("click", () => closeMobileSheet(container));
   }
+  container.querySelector(".request-sheet-panel")?.addEventListener("keydown", (event) => {
+    handleMobileSheetKeydown(event, container);
+  });
 
   container.querySelector("#request-help-btn").addEventListener("click", () => {
     container.querySelector("#request-help").classList.toggle("is-hidden");
@@ -187,20 +202,7 @@ function bindEditor(container) {
   onClickBusy(container.querySelector("#request-delete-selection"), () => deleteSelectedRequests(container));
 
   for (const cell of container.querySelectorAll("[data-cell-key]")) {
-    cell.addEventListener("mousedown", (e) => {
-      if (isInputDisabled()) return;
-      e.preventDefault();
-      startSelection(cell.dataset.cellKey);
-      // Register for every drag.  A one-time listener registered at render
-      // time can be consumed by an unrelated click, leaving selection stuck.
-      document.addEventListener("mouseup", stopDragging, { once: true });
-      updateGridSelection(container);
-    });
-    cell.addEventListener("mouseenter", () => {
-      if (!editor.isDragging || isInputDisabled()) return;
-      extendSelection(cell.dataset.cellKey);
-      updateGridSelection(container);
-    });
+    cell.addEventListener("pointerdown", (event) => beginGridDrag(event, cell, container));
     cell.addEventListener("click", () => focusGrid(container));
   }
 
@@ -222,8 +224,6 @@ function updateGridSelection(container) {
     cell.classList.toggle("is-selected", selected);
     cell.classList.toggle("is-focused", focused);
     cell.setAttribute("aria-selected", String(selected));
-    const hint = cell.querySelector(".request-day-hint");
-    if (hint) hint.textContent = focused || selected ? "D/E/N/O" : "";
   }
   focusGrid(container);
 }
@@ -262,6 +262,50 @@ function isFormControl(target) {
   return ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(target.tagName);
 }
 
+function beginGridDrag(event, cell, container) {
+  if (isInputDisabled() || event.button !== 0 || !event.isPrimary) return;
+  event.preventDefault();
+  cancelGridDrag();
+  startSelection(cell.dataset.cellKey);
+  updateGridSelection(container);
+
+  const pointerId = event.pointerId;
+  const extendFromEvent = (pointerEvent) => {
+    if (pointerEvent.pointerId !== pointerId || !editor.isDragging) return;
+    const targetCell = pointerEvent.target instanceof Element
+      ? pointerEvent.target.closest("[data-cell-key]")
+      : null;
+    if (!targetCell || !container.contains(targetCell)) return;
+    extendSelection(targetCell.dataset.cellKey);
+    updateGridSelection(container);
+  };
+  const finish = (pointerEvent) => {
+    if (pointerEvent?.pointerId !== undefined && pointerEvent.pointerId !== pointerId) return;
+    extendFromEvent(pointerEvent);
+    cancelGridDrag();
+  };
+  const cancel = () => cancelGridDrag();
+  const cleanup = () => {
+    document.removeEventListener("pointermove", extendFromEvent);
+    document.removeEventListener("pointerup", finish);
+    document.removeEventListener("pointercancel", finish);
+    window.removeEventListener("blur", cancel);
+    if (removeGridDragListeners === cleanup) removeGridDragListeners = null;
+  };
+
+  removeGridDragListeners = cleanup;
+  document.addEventListener("pointermove", extendFromEvent);
+  document.addEventListener("pointerup", finish);
+  document.addEventListener("pointercancel", finish);
+  window.addEventListener("blur", cancel);
+}
+
+function cancelGridDrag() {
+  removeGridDragListeners?.();
+  removeGridDragListeners = null;
+  stopDragging();
+}
+
 async function applyShift(container, shift) {
   if (isInputDisabled()) return;
   const cells = selectedCells();
@@ -272,19 +316,15 @@ async function applyShift(container, shift) {
 
   status.textContent = `${cells.length}개 셀에 ${shift} ${KIND_LABELS[editor.mode]} 적용 중...`;
   try {
-    for (const cell of cells) {
-      const replacing = current.requests.filter(
-        (item) => sameRequestBucket(item, cell.name, cell.date) || isOppositeRequest(item, cell.name, cell.date)
-      );
-      for (const item of replacing) current = await api.deleteRequest(item.id);
-      current = await api.addRequest({
+    current = await api.addRequestsBulk({
+      cells: cells.map((cell) => ({
         nurse_name: current.is_admin ? cell.name : null,
         date: cell.date,
-        kind,
-        requested_shift: shift,
-        memo,
-      });
-    }
+      })),
+      kind,
+      requested_shift: shift,
+      memo,
+    });
 
     const doneMessage = `${cells.length}개 셀에 ${shift} ${KIND_LABELS[editor.mode]} 적용됨`;
     if (cells.length === 1) moveFocus("ArrowRight", false);
@@ -312,19 +352,6 @@ async function deleteSelectedRequests(container) {
   } catch (err) {
     status.textContent = `오류: ${err.message}`;
   }
-}
-
-function sameRequestBucket(item, name, date) {
-  if (item.nurse_name !== name || item.date !== date) return false;
-  if (editor.mode === "avoid") return item.kind === "avoid";
-  if (editor.mode === "other") return item.kind === "prefer" && Boolean(item.memo);
-  return item.kind === "prefer" && !item.memo;
-}
-
-function isOppositeRequest(item, name, date) {
-  if (item.nurse_name !== name || item.date !== date) return false;
-  const nextKind = editor.mode === "avoid" ? "avoid" : "prefer";
-  return item.kind !== nextKind;
 }
 
 function requestGridRows() {
@@ -412,19 +439,20 @@ function mobileRequestBadge(item) {
   return `<strong class="request-mobile-shift is-${kind}">${escapeHtml(label)}</strong>`;
 }
 
-function openMobileSheet(container) {
+function openMobileSheet(container, trigger) {
   const sheet = container.querySelector(".request-sheet");
   if (!sheet) return;
+  sheetReturnFocusKey = trigger?.dataset.mobileCellKey ?? sheetReturnFocusKey;
   const cell = selectedCells()[0];
   sheet.querySelector("#request-sheet-date").textContent = cell ? `${formatDate(cell.date)} (${dayLabel(cell.date).split("(")[1]}` : "";
   renderMobileSheetContent(container);
   sheet.classList.add("is-open");
   sheet.setAttribute("aria-hidden", "false");
   document.body.classList.add("has-request-sheet");
-  sheet.querySelector("[data-apply-shift]")?.focus();
+  sheet.querySelector("[data-sheet-close]")?.focus();
 }
 
-function renderMobileSheetContent(container) {
+function renderMobileSheetContent(container, focusSelector = "") {
   const sheet = container.querySelector(".request-sheet");
   const content = sheet?.querySelector("#request-sheet-content");
   const cell = selectedCells()[0];
@@ -453,7 +481,7 @@ function renderMobileSheetContent(container) {
   for (const button of content.querySelectorAll("[data-request-mode]")) {
     button.addEventListener("click", () => {
       editor.mode = button.dataset.requestMode;
-      renderMobileSheetContent(container);
+      renderMobileSheetContent(container, `[data-request-mode="${editor.mode}"]`);
     });
   }
   for (const button of content.querySelectorAll("[data-apply-shift]")) {
@@ -462,6 +490,7 @@ function renderMobileSheetContent(container) {
   for (const button of content.querySelectorAll("[data-delete-current]")) {
     onClickBusy(button, () => deleteMobileRequest(container, button.dataset.deleteCurrent), "삭제 중...");
   }
+  if (focusSelector) sheet.querySelector(focusSelector)?.focus();
 }
 
 function mobileCurrentRequest(item) {
@@ -494,7 +523,7 @@ function bindMobileDay(container, day) {
   const open = () => {
     startSelection(day.dataset.mobileCellKey);
     stopDragging();
-    openMobileSheet(container);
+    openMobileSheet(container, day);
   };
   day.addEventListener("pointerdown", () => {
     longPressed = false;
@@ -530,7 +559,7 @@ async function deleteMobileDateRequests(container, key) {
   if (!targets.length) {
     startSelection(key);
     stopDragging();
-    openMobileSheet(container);
+    openMobileSheet(container, container.querySelector(`[data-mobile-cell-key="${cssAttrValue(key)}"]`));
     return;
   }
   if (!confirm(`${formatDate(date)} 신청 ${targets.length}건을 모두 삭제하시겠습니까?`)) return;
@@ -550,6 +579,40 @@ function closeMobileSheet(container) {
   sheet.classList.remove("is-open");
   sheet.setAttribute("aria-hidden", "true");
   document.body.classList.remove("has-request-sheet");
+  const returnFocusKey = sheetReturnFocusKey;
+  sheetReturnFocusKey = "";
+  if (returnFocusKey) restoreMobileDayFocus(container, returnFocusKey);
+}
+
+function handleMobileSheetKeydown(event, container) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeMobileSheet(container);
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const panel = event.currentTarget;
+  const focusable = [...panel.querySelectorAll(
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )];
+  if (!focusable.length) return;
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function restoreMobileDayFocus(container, key) {
+  requestAnimationFrame(() => {
+    container.querySelector(`[data-mobile-cell-key="${cssAttrValue(key)}"]`)?.focus({ preventScroll: true });
+  });
 }
 
 function requestCell(name, date) {
@@ -557,9 +620,7 @@ function requestCell(name, date) {
   const selected = editor.selectedKeys.has(key);
   const focused = editor.focusedKey === key;
   const requests = requestsForCell(name, date);
-  const html = requests.length
-    ? requests.map((item) => requestChip(item)).join("")
-    : `<span class="request-day-hint">${focused || selected ? "D/E/N/O" : ""}</span>`;
+  const html = requests.length ? requests.map((item) => requestChip(item)).join("") : "";
   return `
     <td
       class="request-grid-cell ${isWeekend(date) ? "col-holiday" : ""} ${selected ? "is-selected" : ""} ${focused ? "is-focused" : ""}"
@@ -744,6 +805,12 @@ function dayLabel(date) {
   const [, month, day] = date.split("-");
   const weekday = WEEKDAY_KR[new Date(`${date}T00:00:00`).getDay()];
   return `${Number(month)}/${Number(day)}(${weekday})`;
+}
+
+function dateHeader(date) {
+  const [, , day] = date.split("-");
+  const weekday = WEEKDAY_KR[new Date(`${date}T00:00:00`).getDay()];
+  return `<span class="date-header-day">${Number(day)}</span><span class="date-header-weekday">${weekday}</span>`;
 }
 
 function formatDate(date) {

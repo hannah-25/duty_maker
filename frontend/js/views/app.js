@@ -3,6 +3,7 @@ import { state, resetAuth, resetWard } from "../state.js";
 import { navigateTo, wardSelectPath } from "../router.js";
 import { onClickBusy } from "../ui.js";
 import { renderAccounts } from "./accounts.js";
+import { renderAdminGuide } from "./admin-guide.js";
 import { renderPrevMonth } from "./prev-month.js";
 import { renderRequirements } from "./requirements.js";
 import { renderRequests } from "./requests.js";
@@ -46,6 +47,7 @@ export function renderApp(root, navigate) {
           <strong>${escapeHtml(state.name)}</strong>
           <span>${state.isAdmin ? "관리자" : "사용자"}</span>
         </span>
+        ${state.isAdmin ? `<button id="help-btn" aria-label="사용법" title="사용법">?</button>` : ""}
         <button id="change-pin-btn">PIN 변경</button>
         <button id="logout-btn">로그아웃</button>
         <button id="switch-ward-btn">병동 전환</button>
@@ -62,6 +64,7 @@ export function renderApp(root, navigate) {
       <button id="cp-cancel" style="margin-top:0.6rem">취소</button>
       <div id="cp-msg"></div>
     </div>
+    ${state.isAdmin ? helpModalMarkup() : ""}
     <div class="tab-bar" id="tab-bar"></div>
     <div id="tab-content"></div>
   `;
@@ -75,6 +78,7 @@ export function renderApp(root, navigate) {
     navigateTo(wardSelectPath());
   });
   wireChangePin(root);
+  if (state.isAdmin) wireHelpModal(root);
 
   const tabBar = root.querySelector("#tab-bar");
   const content = root.querySelector("#tab-content");
@@ -109,6 +113,51 @@ export function renderApp(root, navigate) {
   }
 
   renderActiveTab();
+}
+
+function helpModalMarkup() {
+  return `
+    <div class="help-modal" id="help-modal" aria-hidden="true">
+      <button class="help-modal-backdrop" type="button" data-help-close aria-label="닫기"></button>
+      <section class="help-modal-panel" role="dialog" aria-modal="true" aria-labelledby="help-modal-title">
+        <div class="help-modal-heading">
+          <strong id="help-modal-title">사용법</strong>
+          <button type="button" data-help-close aria-label="닫기">×</button>
+        </div>
+        <div id="help-modal-content" class="help-modal-body"></div>
+      </section>
+    </div>
+  `;
+}
+
+function wireHelpModal(root) {
+  const modal = root.querySelector("#help-modal");
+  const helpBtn = root.querySelector("#help-btn");
+  if (!modal || !helpBtn) return;
+  let contentRendered = false;
+
+  const close = () => {
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    helpBtn.focus();
+  };
+  const open = () => {
+    if (!contentRendered) {
+      renderAdminGuide(modal.querySelector("#help-modal-content"));
+      contentRendered = true;
+    }
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    modal.querySelector("[data-help-close]")?.focus();
+  };
+
+  helpBtn.addEventListener("click", open);
+  for (const btn of modal.querySelectorAll("[data-help-close]")) {
+    btn.addEventListener("click", close);
+  }
+  modal.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+  });
 }
 
 function wireChangePin(root) {

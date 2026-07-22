@@ -1,6 +1,6 @@
 from datetime import date
 
-from api.routers.requests import _replace_opposite_kind, _requests_for_target_month
+from api.routers.requests import _apply_request_cells, _replace_opposite_kind, _requests_for_target_month
 from core.models import DutyRequest, ShiftType
 
 
@@ -49,3 +49,23 @@ def test_requests_for_target_month_excludes_requests_from_previous_month():
     state = {"year": 2026, "month": 8, "duty_requests": [july, august]}
 
     assert _requests_for_target_month(state) == [august]
+
+
+def test_apply_request_cells_replaces_only_its_bucket_and_opposite_kind():
+    target_day = date(2026, 7, 10)
+    requests = [
+        _request("Kim", target_day, "prefer", ShiftType.D),
+        _request("Kim", target_day, "avoid", ShiftType.N),
+        DutyRequest("Kim", target_day, ShiftType.E, kind="prefer", decision="force", memo="교육"),
+        _request("Lee", target_day, "avoid", ShiftType.N),
+    ]
+
+    result = _apply_request_cells(
+        requests, [("Kim", target_day)], ShiftType.N, "prefer", ""
+    )
+
+    assert [(req.nurse_name, req.kind, req.requested_shift, req.memo) for req in result] == [
+        ("Kim", "prefer", ShiftType.E, "교육"),
+        ("Lee", "avoid", ShiftType.N, ""),
+        ("Kim", "prefer", ShiftType.N, ""),
+    ]

@@ -41,31 +41,39 @@ function paint(container) {
   const { year, month, dates, nurse_names: names, confirmed } = current;
   const previousScroll = container.querySelector(".prev-month-editor .schedule-scroll");
   const scrollLeft = previousScroll?.scrollLeft ?? 0;
+  const scrollTop = previousScroll?.scrollTop ?? 0;
 
   container.innerHTML = `
-    <h2 style="font-size:1.15rem">직전 달 근무</h2>
-    <p class="caption">
+    <header class="page-header">
+      <h2>직전 달 근무</h2>
+      <p class="caption">
       ${year}년 ${month}월 근무표를 만들기 전에, 직전 달 마지막 5일의 근무를 입력하세요.
       월 경계의 연속근무·연속나이트·나이트 후 휴식 규칙에 사용됩니다. 빈칸은 오프로 처리됩니다.
-    </p>
+      </p>
+    </header>
 
     <div class="prev-month-banner ${bannerClass(confirmed)}">${bannerText(confirmed)}</div>
 
     ${
       names.length === 0
         ? `<p class="caption">먼저 '명단' 탭에서 간호사를 등록하세요.</p>`
-        : renderEditor(dates, names)
+        : renderEditor(month, dates, names)
     }
   `;
 
   if (names.length) {
     bindEditor(container);
     const nextScroll = container.querySelector(".prev-month-editor .schedule-scroll");
-    if (nextScroll) requestAnimationFrame(() => (nextScroll.scrollLeft = scrollLeft));
+    if (nextScroll) {
+      requestAnimationFrame(() => {
+        nextScroll.scrollLeft = scrollLeft;
+        nextScroll.scrollTop = scrollTop;
+      });
+    }
   }
 }
 
-function renderEditor(dates, names) {
+function renderEditor(month, dates, names) {
   return `
     <section class="request-editor prev-month-editor" aria-label="직전 달 근무 빠른 입력">
       <div class="request-guide-bar">
@@ -85,9 +93,12 @@ function renderEditor(dates, names) {
       <div class="schedule-scroll">
         <table class="request-grid" aria-label="직전 달 근무 입력 표">
           <thead>
-            <tr>
-              <th>이름</th>
-              ${dates.map((iso) => `<th class="${isWeekend(iso) ? "col-holiday" : ""}">${dayLabel(iso)}</th>`).join("")}
+            <tr class="date-month-row">
+              <th rowspan="2">이름</th>
+              <th class="date-month-label" colspan="${dates.length}">${month}월</th>
+            </tr>
+            <tr class="date-header-row">
+              ${dates.map((iso) => `<th class="${isWeekend(iso) ? "col-holiday" : ""}">${dateHeader(iso)}</th>`).join("")}
             </tr>
           </thead>
           <tbody>${gridRows(dates, names)}</tbody>
@@ -100,9 +111,9 @@ function renderEditor(dates, names) {
         <span class="caption" style="margin:0">단일 셀 입력 후 오른쪽 셀로 자동 이동합니다.</span>
       </div>
 
-      <div style="margin-top:1rem">
+      <div class="action-row">
         <button class="primary inline-primary" id="prev-month-save">저장</button>
-        <span id="prev-month-status" class="caption" style="margin-left:0.8rem"></span>
+        <span id="prev-month-status" class="caption status-message"></span>
       </div>
     </section>
   `;
@@ -125,9 +136,7 @@ function gridCell(name, iso) {
   const selected = editor.selectedKeys.has(key);
   const focused = editor.focusedKey === key;
   const shift = shiftAt(name, iso);
-  const body = shift
-    ? `<span class="prev-month-chip">${escapeHtml(shift)}</span>`
-    : `<span class="request-day-hint">${focused || selected ? "D/E/N/S/O" : ""}</span>`;
+  const body = shift ? `<span class="prev-month-chip">${escapeHtml(shift)}</span>` : "";
   return `
     <td
       class="request-grid-cell ${isWeekend(iso) ? "col-holiday" : ""} ${selected ? "is-selected" : ""} ${focused ? "is-focused" : ""}"
@@ -240,8 +249,6 @@ function updateSelection(container) {
     cell.classList.toggle("is-selected", selected);
     cell.classList.toggle("is-focused", focused);
     cell.setAttribute("aria-selected", String(selected));
-    const hint = cell.querySelector(".request-day-hint");
-    if (hint) hint.textContent = focused || selected ? "D/E/N/S/O" : "";
   }
   focusGrid(container);
 }
@@ -377,6 +384,12 @@ function dayLabel(iso) {
   const [, month, day] = iso.split("-");
   const weekday = WEEKDAY_KR[new Date(`${iso}T00:00:00`).getDay()];
   return `${Number(month)}/${Number(day)}(${weekday})`;
+}
+
+function dateHeader(iso) {
+  const [, , day] = iso.split("-");
+  const weekday = WEEKDAY_KR[new Date(`${iso}T00:00:00`).getDay()];
+  return `<span class="date-header-day">${Number(day)}</span><span class="date-header-weekday">${weekday}</span>`;
 }
 
 function formatDate(iso) {

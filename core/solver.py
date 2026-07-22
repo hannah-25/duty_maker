@@ -66,7 +66,21 @@ def generate_schedule(
     sm.add_tier3_exceptions(exceptions)
 
     sm.model.Minimize(sum(sm.objective_terms()))
-    _apply_n_cluster_hint(sm, nurses, current_days, requirements)
+    if not _apply_feasible_assignment_hint(
+        sm,
+        nurses,
+        current_days,
+        lb_days,
+        history,
+        requirements,
+        off_target,
+        merged_settings,
+        active_duty_requests,
+        fixed_assignments or {},
+        require_change_from,
+        time_limit_seconds,
+    ):
+        _apply_n_cluster_hint(sm, nurses, current_days, requirements)
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
@@ -172,6 +186,58 @@ def _apply_n_cluster_hint(
     for (nurse_name, day), val in hint.items():
         var = sm.shift_vars[(nurse_name, day)][ShiftType.N]
         sm.model.AddHint(var, val)
+
+
+def _apply_feasible_assignment_hint(
+    sm: ScheduleModel,
+    nurses: list[Nurse],
+    current_days: list[date],
+    lookback_days: list[date],
+    history: dict[tuple[str, date], ShiftType],
+    requirements: dict[date, DayRequirement],
+    off_target: dict[str, int],
+    settings: dict,
+    duty_requests: list[DutyRequest],
+    fixed_assignments: dict[tuple[str, date], ShiftType],
+    require_change_from: dict[tuple[str, date], ShiftType] | None,
+    time_limit_seconds: float,
+) -> bool:
+    """Seed optimization with a quickly found solution of the hard rules.
+
+    Exact staffing targets shrink the feasible region considerably.  A complete
+    hard-feasible hint prevents CP-SAT from spending the whole optimization
+    budget before it finds any valid roster.
+    """
+    hard_sm = ScheduleModel(
+        nurses,
+        current_days,
+        lookback_days,
+        history,
+        requirements,
+        off_target,
+        use_assumptions=False,
+        settings=settings,
+    )
+    hard_sm.add_tier1_hard_constraints()
+    hard_sm.add_fixed_assignments(
+        fixed_assignments, require_change_from=require_change_from
+    )
+    hard_sm.add_duty_requests(duty_requests)
+
+    hard_solver = cp_model.CpSolver()
+    hard_solver.parameters.max_time_in_seconds = min(10.0, max(1.0, time_limit_seconds))
+    hard_solver.parameters.num_search_workers = 8
+    status = hard_solver.Solve(hard_sm.model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return False
+
+    for nurse in nurses:
+        for day in current_days:
+            for shift, hard_var in hard_sm.shift_vars[(nurse.name, day)].items():
+                sm.model.AddHint(
+                    sm.shift_vars[(nurse.name, day)][shift], hard_solver.Value(hard_var)
+                )
+    return True
 
 
 def _diagnose_infeasibility(solver: cp_model.CpSolver, sm: ScheduleModel) -> list[str]:

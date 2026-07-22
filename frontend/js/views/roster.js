@@ -82,8 +82,10 @@ export async function renderRoster(container) {
 
 function paint(container) {
   container.innerHTML = `
-    <h2 style="font-size:1.15rem">간호사 명단</h2>
-    <p class="caption">행을 드래그해 표시 순서를 바꿀 수 있습니다. 이 순서는 근무표와 HWP 출력에 반영됩니다.</p>
+    <header class="page-header">
+      <h2>간호사 명단</h2>
+      <p class="caption">행을 드래그해 표시 순서를 바꿀 수 있습니다. 이 순서는 근무표와 HWP 출력에 반영됩니다.</p>
+    </header>
 
     <div class="roster-scroll">
       <div class="nurse-row nurse-header">
@@ -103,13 +105,15 @@ function paint(container) {
     </div>
     <button id="add-nurse-btn">+ 간호사 추가</button>
 
-    <h2 style="font-size:1.15rem;margin-top:2rem">보조 인력</h2>
+    <section class="page-section">
+    <h2>보조 인력</h2>
     <div id="assistant-rows"></div>
     <button id="add-assistant-btn">+ 보조 인력 추가</button>
+    </section>
 
-    <div style="margin-top:1.4rem">
+    <div class="action-row">
       <button class="primary inline-primary" id="save-roster-btn">저장</button>
-      <span id="roster-status" class="caption" style="margin:0 0 0 0.8rem"></span>
+      <span id="roster-status" class="caption status-message"></span>
     </div>
   `;
 

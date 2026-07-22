@@ -25,6 +25,11 @@ let regionSelection = null;
 let regenerationPreview = null;
 let editingCell = null;
 let exportSettings = null;
+let disposeRegionSelectionListeners = () => {};
+let scheduleEditMode = false;
+// 편집 세션 동안 실제로 건드린(값 변경 또는 우클릭 고정 토글) 셀만 담는다 — 저장 전까지
+// 서버에는 아무것도 전달되지 않는다. { edits: Map<"이름|날짜", { nurse_name, date, shift, pinned }> }
+let editDraft = null;
 
 export async function renderScheduleResult(container) {
   [current, exportSettings] = await Promise.all([api.getSchedule(), api.getExportSettings()]);
@@ -34,13 +39,22 @@ export async function renderScheduleResult(container) {
   regionSelection = null;
   regenerationPreview = null;
   editingCell = null;
+  scheduleEditMode = false;
+  editDraft = null;
   paint(container);
 }
 
 function paint(container) {
+  // Root-level updates (generate, publish, apply, and a manual edit) replace
+  // the result markup. Capture the result grid before doing so, otherwise the
+  // browser creates a fresh scroll container at its origin.
+  const previousPosition = captureSchedulePosition(container);
+  disposeRegionSelectionListeners();
   container.innerHTML = `
-    <h2 style="font-size:1.15rem">${state.isAdmin ? "생성 결과" : "근무표"}</h2>
-    <p class="caption">${current.year}년 ${current.month}월 근무표</p>
+    <header class="page-header">
+      <h2>${state.isAdmin ? "생성 결과" : "근무표"}</h2>
+      <p class="caption">${current.year}년 ${current.month}월 근무표</p>
+    </header>
     ${adminControls()}
     ${downloadControls()}
     <div id="schedule-status"></div>
@@ -55,6 +69,11 @@ function paint(container) {
         const stopProgress = showGenerationProgress(status);
         try {
           current = await api.generateSchedule();
+          // 새로 생성된 근무표는 이전 편집 세션의 draft와 무관하다 — 그대로 두면
+          // 옛 셀 값이 새 근무표 위에 겹쳐 보여 집계가 어긋난다.
+          scheduleEditMode = false;
+          editDraft = null;
+          editingCell = null;
           paint(container);
         } catch (err) {
           status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
@@ -117,7 +136,27 @@ function paint(container) {
     );
   }
 
-  paintSchedule(container);
+  paintSchedule(container, previousPosition);
+}
+
+function captureSchedulePosition(container) {
+  const selector = container?.id === "schedule-view" ? ".schedule-scroll" : "#schedule-body .schedule-scroll";
+  const scroll = container?.querySelector?.(selector);
+  return {
+    left: scroll?.scrollLeft ?? 0,
+    top: scroll?.scrollTop ?? 0,
+    pageLeft: window.scrollX,
+    pageTop: window.scrollY,
+  };
+}
+
+function restoreSchedulePosition(scroll, position) {
+  if (!position) return;
+  requestAnimationFrame(() => {
+    scroll.scrollLeft = position.left;
+    scroll.scrollTop = position.top;
+    window.scrollTo(position.pageLeft, position.pageTop);
+  });
 }
 
 function showGenerationProgress(status) {
@@ -212,7 +251,7 @@ function isHoliday(date, holidays) {
   return day === 0 || day === 6 || holidays.has(date);
 }
 
-function paintSchedule(container) {
+function paintSchedule(container, initialPosition = null) {
   const body = container.querySelector("#schedule-body");
   if (!current.visible) {
     body.innerHTML = `<p class="caption">아직 공개된 근무표가 없습니다.</p>`;
@@ -236,34 +275,32 @@ function paintSchedule(container) {
     ${summaryBlock()}
     ${scopeToggleBlock()}
     <div class="view-toggle ${state.isAdmin ? "" : "member-view-toggle"}">
-      <button data-view="grid" class="${viewMode === "grid" ? "active" : ""}">표 보기</button>
-      <button data-view="calendar" class="${viewMode === "calendar" ? "active" : ""}">달력 보기</button>
+      <button data-view="grid" class="${viewMode === "grid" ? "active" : ""}" ${scheduleEditMode ? "disabled" : ""}>표 보기</button>
+      <button data-view="calendar" class="${viewMode === "calendar" ? "active" : ""}" ${scheduleEditMode ? "disabled" : ""}>달력 보기</button>
     </div>
+    ${editControlsHTML()}
     ${regionControlsHTML()}
     <div id="schedule-view"></div>
-    <p class="caption">파란 글자는 반영된 듀티 신청, ★는 차지, 회색은 주말·공휴일입니다.</p>
+    <p class="caption">파란 글자는 반영된 듀티 신청, 회색은 주말·공휴일입니다.${scheduleEditMode ? " 우클릭한 셀은 재생성 시에도 고정됩니다." : ""}</p>
     ${checklistBlock()}
     ${violationsBlock()}
   `;
 
   const view = body.querySelector("#schedule-view");
+  let pendingPosition = initialPosition;
   const renderView = () => {
     const previousScroll = view.querySelector(".schedule-scroll");
-    const previousScrollLeft = previousScroll?.scrollLeft ?? 0;
-    const previousScrollTop = previousScroll?.scrollTop ?? 0;
+    const previousPosition = previousScroll
+      ? captureSchedulePosition(view)
+      : pendingPosition;
+    disposeRegionSelectionListeners();
     const visibleContext = scopedContext(ctx);
     view.innerHTML = viewMode === "calendar" ? calendarViewHTML(visibleContext) : gridViewHTML(visibleContext);
     const nextScroll = view.querySelector(".schedule-scroll");
-    if (nextScroll) {
-      // Some controls still re-render the table. Keep the reader at the same
-      // position even when the scroll container itself is replaced.
-      requestAnimationFrame(() => {
-        nextScroll.scrollLeft = previousScrollLeft;
-        nextScroll.scrollTop = previousScrollTop;
-      });
-    }
-    bindRegionSelection(body, view, visibleContext, renderView);
-    bindScheduleAssignmentEditing(body, view, renderView);
+    if (nextScroll) restoreSchedulePosition(nextScroll, previousPosition);
+    pendingPosition = null;
+    disposeRegionSelectionListeners = bindRegionSelection(body, view, visibleContext, renderView);
+    bindScheduleAssignmentEditing(body, view, renderView, visibleContext);
   };
   const scopeButton = body.querySelector("#schedule-scope-toggle");
   if (scopeButton) {
@@ -286,7 +323,50 @@ function paintSchedule(container) {
       renderView();
     });
   }
+  bindScheduleEditControls(container, body);
   renderView();
+}
+
+function bindScheduleEditControls(container, body) {
+  const startButton = body.querySelector("#schedule-edit-start-btn");
+  if (startButton) {
+    startButton.addEventListener("click", () => {
+      // 영역 다시 생성 도구는 자체 렌더링(renderView)만 갱신하므로, 그 도구가 켜진
+      // 상태에서도 이 버튼이 잠깐 보일 수 있다 — 편집 모드로 들어갈 때 확실히 꺼둔다.
+      clearRegionState();
+      scheduleEditMode = true;
+      editDraft = { edits: new Map() };
+      paint(container);
+    });
+  }
+  const saveButton = body.querySelector("#schedule-edit-save-btn");
+  if (saveButton) {
+    onClickBusy(saveButton, async () => {
+      const status = container.querySelector("#schedule-status");
+      try {
+        current = await api.updateScheduleAssignments({
+          expected_revision: current.revision ?? current.schedule_revision,
+          edits: [...editDraft.edits.values()],
+        });
+        scheduleEditMode = false;
+        editDraft = null;
+        editingCell = null;
+        paint(container);
+      } catch (err) {
+        status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+      }
+    }, "저장 중...");
+  }
+  const cancelButton = body.querySelector("#schedule-edit-cancel-btn");
+  if (cancelButton) {
+    cancelButton.addEventListener("click", () => {
+      if (editDraft?.edits.size && !confirm("저장하지 않은 변경사항을 취소할까요?")) return;
+      scheduleEditMode = false;
+      editDraft = null;
+      editingCell = null;
+      paint(container);
+    });
+  }
 }
 
 function supportsRegionSelection() {
@@ -295,8 +375,30 @@ function supportsRegionSelection() {
   return state.isAdmin && window.matchMedia("(min-width: 761px)").matches;
 }
 
+function editControlsHTML() {
+  if (!state.isAdmin || current.feasible !== true) return "";
+  if (scheduleEditMode) {
+    const count = editDraft?.edits.size ?? 0;
+    return `
+      <div class="result-controls schedule-edit-controls">
+        <button class="primary inline-primary" id="schedule-edit-save-btn" ${count ? "" : "disabled"}>저장</button>
+        <button type="button" id="schedule-edit-cancel-btn">취소</button>
+        <span class="caption">${count ? `${count}개 셀 변경됨 · ` : "변경사항 없음 · "}우클릭: 고정 / 고정 해제</span>
+      </div>
+    `;
+  }
+  // 영역 다시 생성 도구와 동시에 켤 수 없다 — 도구가 하나라도 활성 상태면 진입 버튼을 숨긴다.
+  if (regionMode || regenerationPreview) return "";
+  return `
+    <div class="result-controls">
+      <button type="button" id="schedule-edit-start-btn">근무표 수정</button>
+    </div>
+  `;
+}
+
 function regionControlsHTML() {
   if (!state.isAdmin) return "";
+  if (scheduleEditMode) return "";
   return `
     <section class="schedule-region-tools" id="schedule-region-tools" aria-label="근무표 영역 다시 생성">
       <button type="button" id="region-mode-btn" aria-pressed="false">영역 다시 생성</button>
@@ -334,10 +436,10 @@ function previewAssignments() {
 
 function bindRegionSelection(body, view, ctx, renderView) {
   const tools = body.querySelector("#schedule-region-tools");
-  if (!tools) return;
+  if (!tools) return () => {};
   const supported = supportsRegionSelection();
   tools.classList.toggle("is-supported", supported);
-  if (!supported || viewMode !== "grid") return;
+  if (!supported || viewMode !== "grid") return () => {};
 
   const modeButton = tools.querySelector("#region-mode-btn");
   const clearButton = tools.querySelector("#region-clear-btn");
@@ -375,7 +477,15 @@ function bindRegionSelection(body, view, ctx, renderView) {
 
   let anchor = null;
   let activePointerId = null;
+  let captureTarget = null;
+  let pointerPosition = null;
+  let autoScrollFrame = null;
+  const scroll = view.querySelector(".schedule-scroll");
+  const events = new AbortController();
+  const edgeSize = 48;
+  const maxScrollStep = 22;
   const selectTo = (cell) => {
+    if (!anchor) return;
     const row = Number(cell.dataset.regionRow);
     const col = Number(cell.dataset.regionCol);
     regionSelection = {
@@ -388,20 +498,60 @@ function bindRegionSelection(body, view, ctx, renderView) {
       item.classList.toggle("region-selected", r >= regionSelection.rowStart && r <= regionSelection.rowEnd && c >= regionSelection.colStart && c <= regionSelection.colEnd);
     });
   };
+  const selectAtPointer = () => {
+    if (!pointerPosition) return;
+    const cell = document.elementFromPoint(pointerPosition.x, pointerPosition.y)?.closest("[data-region-row]");
+    if (cell && view.contains(cell)) selectTo(cell);
+  };
+  const edgeVelocity = (position, start, end) => {
+    if (position < start + edgeSize) return -Math.min(1, (start + edgeSize - position) / edgeSize);
+    if (position > end - edgeSize) return Math.min(1, (position - (end - edgeSize)) / edgeSize);
+    return 0;
+  };
+  const stopAutoScroll = () => {
+    if (autoScrollFrame !== null) cancelAnimationFrame(autoScrollFrame);
+    autoScrollFrame = null;
+  };
+  const autoScroll = () => {
+    autoScrollFrame = null;
+    if (!anchor || !pointerPosition || !scroll) return;
+    const rect = scroll.getBoundingClientRect();
+    const horizontal = edgeVelocity(pointerPosition.x, rect.left, rect.right);
+    const vertical = edgeVelocity(pointerPosition.y, rect.top, rect.bottom);
+    if (!horizontal && !vertical) return;
+    const left = Math.max(0, Math.min(scroll.scrollWidth - scroll.clientWidth, scroll.scrollLeft + horizontal * maxScrollStep));
+    const top = Math.max(0, Math.min(scroll.scrollHeight - scroll.clientHeight, scroll.scrollTop + vertical * maxScrollStep));
+    if (left !== scroll.scrollLeft || top !== scroll.scrollTop) {
+      scroll.scrollLeft = left;
+      scroll.scrollTop = top;
+      selectAtPointer();
+    }
+    autoScrollFrame = requestAnimationFrame(autoScroll);
+  };
+  const updateAutoScroll = () => {
+    if (autoScrollFrame === null) autoScrollFrame = requestAnimationFrame(autoScroll);
+  };
   view.querySelectorAll("[data-region-row]").forEach((cell) => {
     cell.addEventListener("pointerdown", (event) => {
       if (!regionMode || regenerationPreview || event.button !== 0) return;
       event.preventDefault();
       anchor = { row: Number(cell.dataset.regionRow), col: Number(cell.dataset.regionCol) };
       activePointerId = event.pointerId;
+      captureTarget = cell;
+      pointerPosition = { x: event.clientX, y: event.clientY };
       cell.setPointerCapture(event.pointerId);
       selectTo(cell);
     });
   });
   const finishSelection = () => {
     if (!anchor) return;
+    stopAutoScroll();
+    const pointerId = activePointerId;
     anchor = null;
     activePointerId = null;
+    pointerPosition = null;
+    if (captureTarget?.hasPointerCapture(pointerId)) captureTarget.releasePointerCapture(pointerId);
+    captureTarget = null;
     // The selected-cell styling is updated while dragging.  Re-rendering the
     // table here replaces .schedule-scroll and resets its scroll position.
     // Only the controls need to reflect the completed selection.
@@ -412,11 +562,14 @@ function bindRegionSelection(body, view, ctx, renderView) {
   };
   view.addEventListener("pointermove", (event) => {
     if (!anchor || event.pointerId !== activePointerId || event.buttons !== 1) return;
-    const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-region-row]");
-    if (cell && view.contains(cell)) selectTo(cell);
-  });
-  view.addEventListener("pointerup", finishSelection);
-  view.addEventListener("pointercancel", finishSelection);
+    pointerPosition = { x: event.clientX, y: event.clientY };
+    selectAtPointer();
+    updateAutoScroll();
+  }, { signal: events.signal });
+  view.addEventListener("pointerup", finishSelection, { signal: events.signal });
+  view.addEventListener("pointercancel", finishSelection, { signal: events.signal });
+  view.addEventListener("lostpointercapture", finishSelection, { signal: events.signal });
+  window.addEventListener("blur", finishSelection, { signal: events.signal });
 
   previewButton.onclick = async () => {
     previewButton.disabled = true;
@@ -450,16 +603,26 @@ function bindRegionSelection(body, view, ctx, renderView) {
     try {
       current = await api.applyScheduleRegeneration(regenerationPreview.preview_id);
       clearRegionState();
+      // 재생성된 근무표에 이전 편집 draft가 겹쳐 보이지 않도록 함께 비운다.
+      scheduleEditMode = false;
+      editDraft = null;
       paint(body.closest("main") ?? body.parentElement);
     } catch (err) {
       body.closest("main")?.querySelector("#schedule-status")?.replaceChildren(errorBanner(err.message));
       applyButton.disabled = false;
     }
   };
+  return () => {
+    finishSelection();
+    events.abort();
+  };
 }
 
 function isManualOverride(name, date) {
   const key = `${name}|${date}`;
+  const draftEdit = editDraft?.edits.get(key);
+  if (draftEdit) return draftEdit.pinned;
+
   const persistedCells = current.manual_override_cells;
   if (Array.isArray(persistedCells)) return persistedCells.includes(key);
 
@@ -473,49 +636,46 @@ function isManualOverride(name, date) {
   return Boolean(overrides[key]);
 }
 
-function bindScheduleAssignmentEditing(body, view, renderView) {
-  if (!state.isAdmin || viewMode !== "grid" || current.feasible !== true) return;
+function draftShiftFor(name, date) {
+  return editDraft?.edits.get(`${name}|${date}`)?.shift;
+}
+
+function bindScheduleAssignmentEditing(body, view, renderView, ctx) {
+  if (!state.isAdmin || !scheduleEditMode || viewMode !== "grid" || current.feasible !== true) return;
 
   for (const button of view.querySelectorAll("[data-duty-editor-toggle]")) {
-    button.addEventListener("pointerdown", (event) => {
-      // 일반 모드의 클릭은 영역 선택 핸들러까지 전달하지 않는다.
-      if (!regionMode) event.stopPropagation();
-    });
     button.addEventListener("click", (event) => {
-      if (regionMode || regenerationPreview) {
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
+      event.preventDefault();
       const next = { nurse_name: button.dataset.nurse, date: button.dataset.date };
       editingCell = editingCell?.nurse_name === next.nurse_name && editingCell?.date === next.date ? null : next;
       renderView();
     });
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      const nurse_name = button.dataset.nurse;
+      const date = button.dataset.date;
+      const key = `${nurse_name}|${date}`;
+      const pinned = !isManualOverride(nurse_name, date);
+      const existing = editDraft.edits.get(key);
+      const shift = existing?.shift ?? ctx.byNurse.get(nurse_name)?.get(date) ?? "";
+      editDraft.edits.set(key, { nurse_name, date, shift, pinned });
+      paint(body.closest("main") ?? body.parentElement);
+    });
   }
 
   for (const button of view.querySelectorAll("[data-assignment-shift]")) {
-    button.addEventListener("click", async (event) => {
+    button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       const nurse_name = button.dataset.nurse;
       const date = button.dataset.date;
-      const shift = button.dataset.assignmentShift || null;
-      view.querySelectorAll("[data-assignment-shift]").forEach((item) => { item.disabled = true; });
-      try {
-        current = await api.updateScheduleAssignment({
-          nurse_name,
-          date,
-          shift,
-          expected_revision: current.revision ?? current.schedule_revision,
-        });
-        editingCell = null;
-        regionSelection = null;
-        regenerationPreview = null;
-        paint(body.closest("main") ?? body.parentElement);
-      } catch (err) {
-        body.closest("main")?.querySelector("#schedule-status")?.replaceChildren(errorBanner(err.message));
-        view.querySelectorAll("[data-assignment-shift]").forEach((item) => { item.disabled = false; });
-      }
+      const shift = button.dataset.assignmentShift;
+      const key = `${nurse_name}|${date}`;
+      // 근무 변경 자체는 자동으로 고정하지 않는다 — 이미 우클릭으로 고정돼 있었다면 유지, 아니면 그대로 미고정.
+      const pinned = isManualOverride(nurse_name, date);
+      editDraft.edits.set(key, { nurse_name, date, shift, pinned });
+      editingCell = null;
+      paint(body.closest("main") ?? body.parentElement);
     });
   }
 }
@@ -565,7 +725,7 @@ function buildContext() {
 function gridViewHTML({ dates, holidays, highlights, charges, byNurse, names, helpers }) {
   const candidate = previewAssignments();
   const nurseRows = names.map((name, rowIndex) =>
-    tableRow(name, dates, holidays, highlights, charges, helpers, (date) => byNurse.get(name)?.get(date), true, rowIndex, candidate)
+    tableRow(name, dates, holidays, highlights, charges, helpers, (date) => draftShiftFor(name, date) ?? byNurse.get(name)?.get(date), true, rowIndex, candidate)
   );
   const assistantRows = (scheduleScope === "mine" && !state.isAdmin ? [] : current.assistant_rows).map((row) =>
     tableRow(row.name, dates, holidays, highlights, charges, helpers, (date) => row.marks[date], false)
@@ -593,15 +753,18 @@ function gridViewHTML({ dates, holidays, highlights, charges, byNurse, names, he
     <div class="schedule-scroll">
       <table class="schedule-table">
         <thead>
-          <tr>
-            <th>이름</th>
+          <tr class="date-month-row">
+            <th rowspan="2">이름</th>
+            <th class="date-month-label" colspan="${dates.length}">${monthLabel(dates[0])}</th>
+            ${STAT_COLUMNS.map((label) => `<th class="stat-col" rowspan="2">${label}</th>`).join("")}
+          </tr>
+          <tr class="date-header-row">
             ${dates
               .map(
                 (date) =>
-                  `<th class="${isHoliday(date, holidays) ? "col-holiday" : ""}">${dayLabel(date)}</th>`
+                  `<th class="${isHoliday(date, holidays) ? "col-holiday" : ""}">${dateHeader(date)}</th>`
               )
               .join("")}
-            ${STAT_COLUMNS.map((label) => `<th class="stat-col">${label}</th>`).join("")}
           </tr>
         </thead>
         <tbody>
@@ -622,9 +785,9 @@ function calendarViewHTML({ dates, holidays, charges, byNurse, names, helpers })
     names
       .filter((name) => byNurse.get(name)?.get(date) === shift)
       .map((name) => {
-        const star = charges.has(`${name}|${date}`) ? '<span class="charge-star">★</span>' : "";
+        const charged = charges.has(`${name}|${date}`);
         const tag = helpers.has(name) ? '<span class="helper-tag">헬퍼</span>' : "";
-        return `<div class="cal-name">${escapeHtml(name)}${star}${tag}</div>`;
+        return `<div class="cal-name"><span class="cal-name-line ${charged ? "is-charge" : ""}"><span class="cal-name-text">${escapeHtml(name)}</span>${tag}</span></div>`;
       })
       .join("");
 
@@ -646,12 +809,15 @@ function calendarViewHTML({ dates, holidays, charges, byNurse, names, helpers })
     <div class="schedule-scroll">
       <table class="calendar-table">
         <thead>
-          <tr>
-            <th></th>
+          <tr class="date-month-row">
+            <th rowspan="2"></th>
+            <th class="date-month-label" colspan="${dates.length}">${monthLabel(dates[0])}</th>
+          </tr>
+          <tr class="date-header-row">
             ${dates
               .map(
                 (date) =>
-                  `<th class="${isHoliday(date, holidays) ? "col-holiday" : ""}">${dayLabel(date)}</th>`
+                  `<th class="${isHoliday(date, holidays) ? "col-holiday" : ""}">${dateHeader(date)}</th>`
               )
               .join("")}
           </tr>
@@ -671,8 +837,8 @@ function monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names,
     if (scheduleScope === "mine") {
       const shift = byNurse.get(state.name)?.get(date) ?? "";
       if (!shift) return "";
-      const charge = charges.has(`${state.name}|${date}`) ? '<span class="charge-star">★</span>' : "";
-      return `<strong class="member-duty-shift shift-${escapeHtml(shift)}">${escapeHtml(shift)}${charge}</strong>`;
+      const charged = charges.has(`${state.name}|${date}`);
+      return `<strong class="member-duty-shift shift-${escapeHtml(shift)} ${charged ? "is-charge" : ""}">${escapeHtml(shift)}</strong>`;
     }
     return CALENDAR_GROUPS.map(([shift, label]) => {
       const dutyNames = names.filter((name) => byNurse.get(name)?.get(date) === shift);
@@ -680,9 +846,10 @@ function monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names,
       const visibleNames = dutyNames.slice(0, 2);
       const remaining = dutyNames.length - visibleNames.length;
       const visibleMarkup = visibleNames.map((name) => {
-        const charge = charges.has(`${name}|${date}`) ? '<span class="charge-star">★</span>' : "";
+        const charged = charges.has(`${name}|${date}`);
         const helper = helpers.has(name) ? '<span class="helper-tag">헬퍼</span>' : "";
-        return `${escapeHtml(name)}${charge}${helper}`;
+        const nameMarkup = `${escapeHtml(name)}${helper}`;
+        return charged ? `<span class="member-charge-name">${nameMarkup}</span>` : nameMarkup;
       }).join(", ");
       if (!remaining) return `<div class="member-duty-group"><strong>${escapeHtml(label)}</strong><span>${visibleMarkup}</span></div>`;
       return `<details class="member-duty-group"><summary><strong>${escapeHtml(label)}</strong><span>${visibleMarkup}<em> 외 ${remaining}명</em></span></summary><div class="member-duty-expanded">${escapeHtml(dutyNames.join(", "))}</div></details>`;
@@ -722,6 +889,7 @@ function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, 
       const key = `${name}|${date}`;
       const manualOverride = isManualOverride(name, date);
       if (manualOverride) classes.push("manual-override");
+      if (editDraft?.edits.has(key)) classes.push("pending-edit");
       const nextShift = candidate.get(key);
       const changed = nextShift != null && nextShift !== shift;
       if (changed) classes.push("region-preview-changed");
@@ -733,7 +901,6 @@ function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, 
       const editor = isEditing ? `
         <div class="schedule-duty-editor" role="group" aria-label="${escapeHtml(name)} ${date} 근무 변경">
           ${EDITABLE_SHIFTS.map((value) => `<button type="button" data-assignment-shift="${escapeHtml(value)}" data-nurse="${escapeHtml(name)}" data-date="${date}" ${value === shift ? "disabled" : ""}>${escapeHtml(value)}</button>`).join("")}
-          ${manualOverride ? `<button type="button" class="schedule-duty-reset" data-assignment-shift="" data-nurse="${escapeHtml(name)}" data-date="${date}">수동 고정 해제</button>` : ""}
         </div>` : "";
       const display = regionRow == null ? content : `
         <button type="button" class="schedule-duty-cell-button" data-duty-editor-toggle data-nurse="${escapeHtml(name)}" data-date="${date}" aria-expanded="${isEditing}" aria-label="${escapeHtml(name)} ${date} 근무 ${escapeHtml(shift)} 변경">
@@ -749,10 +916,15 @@ function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, 
   return `<tr><th>${label}</th>${cells}${statCells}</tr>`;
 }
 
-function dayLabel(date) {
-  const [, month, day] = date.split("-");
+function monthLabel(date) {
+  const [, month] = date.split("-");
+  return `${Number(month)}월`;
+}
+
+function dateHeader(date) {
+  const [, , day] = date.split("-");
   const weekday = WEEKDAY_KR[new Date(`${date}T00:00:00`).getDay()];
-  return `${Number(month)}/${Number(day)}(${weekday})`;
+  return `<span class="date-header-day">${Number(day)}</span><span class="date-header-weekday">${weekday}</span>`;
 }
 
 function summaryBlock() {

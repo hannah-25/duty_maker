@@ -10,8 +10,10 @@ export async function renderAccounts(container) {
 
 function paint(container) {
   container.innerHTML = `
-    <h2 style="font-size:1.15rem">계정 관리</h2>
-    <p class="caption">PIN 초기화 시 해당 계정의 PIN이 <strong>1234</strong>로 바뀝니다. 사용자는 1234로 로그인한 뒤 본인 PIN을 변경해야 합니다.</p>
+    <header class="page-header">
+      <h2>계정 관리</h2>
+      <p class="caption">PIN 초기화 시 해당 계정의 PIN이 <strong>1234</strong>로 바뀝니다. 사용자는 1234로 로그인한 뒤 본인 PIN을 변경해야 합니다.</p>
+    </header>
     ${unregisteredBlock()}
     <div id="accounts-status" class="caption"></div>
     <div id="account-rows"></div>
@@ -36,6 +38,7 @@ function paintRows(container) {
     return;
   }
   wrap.innerHTML = `
+    <div class="table-scroll">
     <table class="compact-table account-table">
       <thead>
         <tr><th>이름</th><th>상태</th><th>관리자</th><th></th></tr>
@@ -62,6 +65,7 @@ function paintRows(container) {
           .join("")}
       </tbody>
     </table>
+    </div>
   `;
 
   for (const input of wrap.querySelectorAll("[data-admin]")) {

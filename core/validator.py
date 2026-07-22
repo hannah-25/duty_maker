@@ -244,6 +244,7 @@ def validate_schedule(
     allowed_violators: list[str] = []
     n_range_violators: list[str] = []
     off_cap_violators: list[str] = []
+    off_shortfall_violators: list[str] = []
     for n in nurses:
         if getattr(n, "is_helper", False):
             continue
@@ -257,8 +258,15 @@ def validate_schedule(
         elif ShiftType.N in allowed and n.max_n_hard > 0:
             if seq.count(ShiftType.N) > n.max_n_hard:
                 n_range_violators.append(f"{n.name}(N {seq.count(ShiftType.N)})")
-        if not getattr(n, "is_night_dedicated", False) and seq.count(ShiftType.O) > off_target.get(n.name, 0):
-            off_cap_violators.append(n.name)
+        if not getattr(n, "is_night_dedicated", False):
+            o_count = seq.count(ShiftType.O)
+            target = off_target.get(n.name, 0)
+            if o_count > target:
+                off_cap_violators.append(n.name)
+            # 오프 하한은 소프트 목표라 솔버가 못 채울 수 있다 — 하드 위반은 아니지만
+            # 관리자가 놓치지 않도록 체크리스트에 미달분을 표시한다.
+            elif o_count < target:
+                off_shortfall_violators.append(f"{n.name}({target - o_count}일 부족)")
         if n.al_target is not None:
             al_count = seq.count(ShiftType.AL)
             add_check(
@@ -281,5 +289,6 @@ def validate_schedule(
     add_check("가능 듀티", "전체", "간호사별 가능 듀티만 배정", agg(allowed_violators), not allowed_violators)
     add_check("월 나이트 개수", "전체", "개인 N 상한 이하 (전담은 상한만큼 고정)", agg(n_range_violators), not n_range_violators)
     add_check("오프 상한", "전체", "O ≤ 목표 오프일수 (초과 휴식은 연차)", agg(off_cap_violators), not off_cap_violators)
+    add_check("오프 목표 달성", "전체", "O ≥ 목표 오프일수 (소프트 권장)", agg(off_shortfall_violators), not off_shortfall_violators)
 
     return report

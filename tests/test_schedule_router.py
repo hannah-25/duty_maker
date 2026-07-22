@@ -11,7 +11,7 @@ from api.routers.schedule import (
     _solver_settings,
     _validate_selected_cells,
 )
-from api.schemas import ManualAssignmentIn, ScheduleCellIn, ScheduleOut
+from api.schemas import ScheduleCellEditIn, ScheduleCellIn, ScheduleEditBatchIn, ScheduleOut
 from core.models import DutyRequest, Nurse, ScheduleResult, ShiftType
 from core.constraints import merge_ward_settings
 
@@ -64,8 +64,11 @@ def test_manual_assignment_pins_cell_and_increments_revision(monkeypatch):
         lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
     )
 
-    result = schedule_router.update_assignment(
-        ManualAssignmentIn(nurse_name="Kim", date="2026-07-01", shift="N", expected_revision=3),
+    result = schedule_router.update_assignments(
+        ScheduleEditBatchIn(
+            expected_revision=3,
+            edits=[ScheduleCellEditIn(nurse_name="Kim", date="2026-07-01", shift="N", pinned=True)],
+        ),
         CurrentUser("ward", "admin", True),
     )
 
@@ -73,6 +76,60 @@ def test_manual_assignment_pins_cell_and_increments_revision(monkeypatch):
     assert state["manual_overrides"] == {"Kim|2026-07-01": "N"}
     assert state["schedule_previews"] == {}
     assert result.revision == 4
+
+
+def test_manual_assignment_without_pin_does_not_add_override(monkeypatch):
+    day = date(2026, 7, 1)
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 3, "manual_overrides": {},
+        "schedule_previews": {}, "nurses": [Nurse("Kim")], "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=True, assignments={("Kim", day): ShiftType.D}),
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(
+        schedule_router, "_schedule_out",
+        lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
+    )
+
+    schedule_router.update_assignments(
+        ScheduleEditBatchIn(
+            expected_revision=3,
+            edits=[ScheduleCellEditIn(nurse_name="Kim", date="2026-07-01", shift="N", pinned=False)],
+        ),
+        CurrentUser("ward", "admin", True),
+    )
+
+    # 값은 바뀌지만 고정(우클릭)하지 않았으므로 manual_overrides엔 들어가지 않는다.
+    assert state["schedule_result"].assignments[("Kim", day)] is ShiftType.N
+    assert state["manual_overrides"] == {}
+
+
+def test_manual_assignment_unpin_removes_override_keeps_value(monkeypatch):
+    day = date(2026, 7, 1)
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 3,
+        "manual_overrides": {"Kim|2026-07-01": "N"},
+        "schedule_previews": {}, "nurses": [Nurse("Kim")], "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=True, assignments={("Kim", day): ShiftType.N}),
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(
+        schedule_router, "_schedule_out",
+        lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
+    )
+
+    schedule_router.update_assignments(
+        ScheduleEditBatchIn(
+            expected_revision=3,
+            edits=[ScheduleCellEditIn(nurse_name="Kim", date="2026-07-01", shift="N", pinned=False)],
+        ),
+        CurrentUser("ward", "admin", True),
+    )
+
+    assert state["schedule_result"].assignments[("Kim", day)] is ShiftType.N
+    assert state["manual_overrides"] == {}
 
 
 def test_manual_assignment_converts_excess_off_to_annual_leave(monkeypatch):
@@ -95,8 +152,11 @@ def test_manual_assignment_converts_excess_off_to_annual_leave(monkeypatch):
         lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
     )
 
-    schedule_router.update_assignment(
-        ManualAssignmentIn(nurse_name="Kim", date=new_off_day.isoformat(), shift="O", expected_revision=1),
+    schedule_router.update_assignments(
+        ScheduleEditBatchIn(
+            expected_revision=1,
+            edits=[ScheduleCellEditIn(nurse_name="Kim", date=new_off_day.isoformat(), shift="O", pinned=True)],
+        ),
         CurrentUser("ward", "admin", True),
     )
 

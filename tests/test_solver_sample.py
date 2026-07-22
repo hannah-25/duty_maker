@@ -125,7 +125,7 @@ def solved():
     holidays = get_month_holidays(YEAR, MONTH)
     target = compute_month_off_target(YEAR, MONTH, holidays)
     off_target = {n.name: target for n in nurses}
-    result = generate_schedule(nurses, YEAR, MONTH, requirements, off_target, time_limit_seconds=60)
+    result = generate_schedule(nurses, YEAR, MONTH, requirements, off_target, time_limit_seconds=10)
     assert result.feasible, f"실제 명단이 실행불가로 나옴: {result.infeasible_categories}"
     return nurses, requirements, off_target, result
 
@@ -142,6 +142,18 @@ def test_daily_n_meets_minimum(solved):
     for day in month_dates(YEAR, MONTH):
         n_count = sum(1 for n in nurses if result.assignments[(n.name, day)] == ShiftType.N)
         assert n_count >= requirements[day].N.minimum, f"{day}: N {n_count}명 < 하한"
+
+
+def test_daily_staffing_meets_required_target_exactly(solved):
+    """Configured staffing targets are hard constraints, not preferences."""
+    nurses, requirements, _, result = solved
+    assert result.feasible
+
+    for day, req in requirements.items():
+        d = sum(result.assignments[(nurse.name, day)] in (ShiftType.D, ShiftType.S) for nurse in nurses)
+        e = sum(result.assignments[(nurse.name, day)] is ShiftType.E for nurse in nurses)
+        n = sum(result.assignments[(nurse.name, day)] is ShiftType.N for nurse in nurses)
+        assert (d, e, n) == (req.D.target, req.E.target, req.N.target), f"{day}: {(d, e, n)}"
 
 
 def test_daily_staffing_within_range(solved):

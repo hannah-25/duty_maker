@@ -27,6 +27,14 @@
   --shadow: 0 4px 16px rgba(31, 27, 46, 0.07);
   --shadow-lg: 0 14px 36px rgba(31, 27, 46, 0.1);
   --focus-ring: 0 0 0 3px rgba(143, 117, 217, 0.28);
+
+  --space-1: 0.4rem;
+  --space-2: 0.75rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2rem;
+  --control-height: 2.5rem;
+  --content-width: 1400px;
 }
 
 * {
@@ -47,15 +55,22 @@ html, body {
 }
 
 #app-root {
-  max-width: 1400px;
+  max-width: var(--content-width);
   margin: 0 auto;
-  padding: 1.25rem 1rem;
+  padding: clamp(1rem, 2vw, 1.5rem) clamp(1rem, 3vw, 2rem) 2rem;
+  min-width: 0;
 }
 
 h1 {
   letter-spacing: -0.02em;
   font-weight: 800;
   margin: 0 0 0.4rem;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  letter-spacing: -0.015em;
 }
 
 .caption {
@@ -129,8 +144,9 @@ label {
   margin: 0.6rem 0 0.25rem;
 }
 
-input[type="text"], input[type="password"], input[type="number"], select {
+input[type="text"], input[type="password"], input[type="number"], input[type="date"], select {
   width: 100%;
+  min-height: var(--control-height);
   padding: 0.45rem 0.6rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -150,6 +166,7 @@ input[type="date"]:focus, select:focus {
 }
 
 button {
+  min-height: var(--control-height);
   border-radius: 10px;
   font-weight: 600;
   font-family: inherit;
@@ -160,6 +177,51 @@ button {
   color: inherit;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.page-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-4);
+}
+
+.page-header .caption {
+  max-width: 72rem;
+  margin: 0;
+  line-height: 1.55;
+}
+
+.page-section {
+  margin-top: var(--space-5);
+}
+
+.page-section > h2 {
+  margin-bottom: var(--space-2);
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.action-row .caption,
+.status-message {
+  margin: 0;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.table-scroll .compact-table {
+  min-width: 34rem;
 }
 
 button:focus-visible {
@@ -323,6 +385,10 @@ button[aria-busy="true"]::before {
 .tab-bar button.active:hover {
   background: var(--brand-700);
   color: #fff;
+}
+
+#tab-content {
+  min-width: 0;
 }
 
 .app-header {
@@ -784,13 +850,16 @@ kbd {
 .member-view-toggle { display: none; }
 .member-month-calendar { margin-bottom: 0.65rem; }
 .member-duty-shift { display: inline-flex; padding: .12rem .35rem; border-radius: 4px; font-size: .8rem; }
-.member-duty-group { display: grid; grid-template-columns: 1.7rem minmax(0, 1fr); gap: .15rem; width: 100%; font-size: .66rem; line-height: 1.25; }
-.member-duty-group > strong { color: var(--brand-700); }
+.member-duty-shift.is-charge,
+.member-charge-name { border-radius: 3px; background: #fff3d6; }
+.member-charge-name { display: inline-block; padding: 0 .05rem; white-space: nowrap; }
+.member-duty-group { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: .15rem; width: 100%; font-size: .66rem; line-height: 1.25; }
+.member-duty-group > strong { color: var(--brand-700); white-space: nowrap; }
 .member-duty-group > span { overflow-wrap: anywhere; }
 .member-duty-group em { color: var(--ink-muted); font-style: normal; white-space: nowrap; }
-.member-duty-group summary { display: grid; grid-template-columns: 1.7rem minmax(0, 1fr); gap: .15rem; grid-column: 1 / -1; cursor: pointer; list-style: none; }
+.member-duty-group summary { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: .15rem; grid-column: 1 / -1; cursor: pointer; list-style: none; }
 .member-duty-group summary::-webkit-details-marker { display: none; }
-.member-duty-group summary > strong { color: var(--brand-700); }
+.member-duty-group summary > strong { color: var(--brand-700); white-space: nowrap; }
 .member-duty-expanded { grid-column: 1 / -1; padding: .2rem; border-radius: 3px; background: var(--brand-50); overflow-wrap: anywhere; }
 
 .request-editor-status {
@@ -860,12 +929,6 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-}
-
-.request-day-hint {
-  color: #94a3b8;
-  font-size: 0.78rem;
-  font-weight: 700;
 }
 
 .request-chip {
@@ -983,7 +1046,7 @@ kbd {
   box-shadow: 0 1px 0 var(--line);
 }
 
-.request-grid thead th:first-child,
+.request-grid thead .date-month-row th:first-child,
 .request-grid tbody th {
   position: sticky;
   left: 0;
@@ -994,13 +1057,13 @@ kbd {
   text-align: left;
 }
 
-.request-grid thead th:first-child {
+.request-grid thead .date-month-row th:first-child {
   z-index: 5;
 }
 
 .request-grid tbody th {
   padding: 0.32rem 0.5rem;
-  font-weight: 700;
+  font-weight: 500;
   color: #111827;
   white-space: nowrap;
   box-shadow: 1px 0 0 var(--line);
@@ -1036,6 +1099,7 @@ kbd {
 
 .result-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.6rem;
   align-items: center;
   margin-bottom: 0.65rem;
@@ -1075,6 +1139,13 @@ kbd {
   background: var(--surface);
 }
 
+/* 결과 표는 긴 명단에서도 행·열 문맥을 유지할 수 있게 독립 스크롤한다. */
+#schedule-body .schedule-scroll {
+  max-height: min(70vh, calc(100vh - 15rem));
+  overflow: auto;
+  position: relative;
+}
+
 .schedule-table {
   width: max-content;
   min-width: 100%;
@@ -1093,6 +1164,18 @@ kbd {
 
 .schedule-table td {
   position: relative;
+}
+
+.schedule-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface-soft);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+.schedule-table thead th.col-holiday {
+  background: #e9ecef;
 }
 
 .schedule-region-tools {
@@ -1164,6 +1247,18 @@ kbd {
   font-size: 0.72rem;
 }
 
+.pending-edit {
+  box-shadow: inset 0 0 0 2px #2563eb;
+  outline: 1px dashed #2563eb;
+  outline-offset: -3px;
+}
+
+.manual-override.pending-edit {
+  box-shadow: inset 0 0 0 2px #d97706;
+  outline: 1px dashed #2563eb;
+  outline-offset: -3px;
+}
+
 .schedule-duty-editor {
   position: absolute;
   z-index: 5;
@@ -1187,18 +1282,24 @@ kbd {
   font-size: 0.78rem;
 }
 
-.schedule-duty-editor .schedule-duty-reset {
-  flex-basis: 100%;
-  color: #92400e;
-}
-
-.schedule-table th:first-child {
+.schedule-table thead .date-month-row th:first-child,
+.schedule-table tbody th:first-child {
   position: sticky;
   left: 0;
-  z-index: 1;
+  z-index: 2;
   background: #fff;
   min-width: 7rem;
   text-align: left;
+  box-shadow: 1px 0 0 var(--line);
+}
+
+.schedule-table thead .date-month-row th:first-child {
+  z-index: 4;
+  background: var(--surface-soft);
+}
+
+.schedule-table tbody th:first-child {
+  font-weight: 500;
 }
 
 .shift-D {
@@ -1228,13 +1329,6 @@ kbd {
 
 .charge-cell {
   font-weight: 800;
-}
-
-.charge-star {
-  color: #d97706;
-  font-size: 0.7em;
-  vertical-align: super;
-  margin-left: 1px;
 }
 
 .helper-tag {
@@ -1317,6 +1411,7 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
 }
@@ -1378,6 +1473,141 @@ kbd {
   min-width: 4.5rem;
 }
 
+.date-month-label {
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+.date-header-day,
+.date-header-weekday {
+  display: block;
+}
+
+.date-header-day {
+  font-weight: 800;
+}
+
+.date-header-weekday {
+  margin-top: 0.1rem;
+  font-size: 0.88em;
+  font-weight: 600;
+}
+
+/* 두 줄 날짜 헤더가 스크롤 중에도 겹치지 않도록 각 행을 분리한다. */
+.request-grid thead .date-month-row th,
+.schedule-table thead .date-month-row th,
+.calendar-table thead .date-month-row th {
+  top: 0;
+  height: 2rem;
+}
+
+.request-grid thead .date-header-row th,
+.schedule-table thead .date-header-row th,
+.calendar-table thead .date-header-row th {
+  top: 2rem;
+}
+
+/* 데스크톱 근무표는 한 화면 폭 안에 맞추고, 긴 명단은 페이지를 따라 펼친다. */
+/* A month view needs enough room for 31 day columns.  Keep it scrollable on
+   tablets instead of shrinking names and shifts into unreadable columns. */
+@media (min-width: 1101px) {
+  .request-editor .schedule-scroll,
+  #schedule-body .schedule-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .request-grid,
+  .schedule-table,
+  .calendar-table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  .request-grid thead th,
+  .request-grid-cell,
+  .schedule-table th,
+  .schedule-table td,
+  .calendar-table th,
+  .calendar-table td,
+  .calendar-table .cal-cell {
+    min-width: 0;
+  }
+
+  .request-grid thead .date-month-row th:first-child,
+  .request-grid tbody th,
+  .schedule-table thead .date-month-row th:first-child,
+  .schedule-table tbody th:first-child,
+  .calendar-table .cal-group {
+    width: clamp(2.75rem, 4.25vw, 3rem);
+    min-width: 0;
+    max-width: none;
+    padding-right: 0.25rem;
+    padding-left: 0.25rem;
+    font-size: clamp(0.68rem, 0.85vw, 0.8rem);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .request-grid thead .date-header-row th,
+  .schedule-table thead .date-header-row th,
+  .calendar-table thead .date-header-row th {
+    padding: 0.25rem 0.1rem;
+    font-size: clamp(0.58rem, 0.8vw, 0.78rem);
+    line-height: 1.15;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .request-grid-cell,
+  .schedule-table td,
+  .calendar-table .cal-cell {
+    padding: 0.25rem 0.1rem;
+    font-size: clamp(0.62rem, 0.9vw, 0.85rem);
+    overflow-wrap: anywhere;
+  }
+
+  .schedule-table thead .stat-col {
+    width: clamp(1.15rem, 1.75vw, 1.7rem);
+    padding-right: 0.1rem;
+    padding-left: 0.1rem;
+  }
+
+  .calendar-table .cal-name {
+    display: block;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .calendar-table .cal-name-line {
+    display: inline-block;
+    max-width: 100%;
+    white-space: nowrap;
+  }
+
+  .calendar-table .cal-name-text {
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+
+  .calendar-table .cal-name-line.is-charge {
+    padding: 0.03rem 0.05rem;
+    border-radius: 3px;
+    background: #fff3d6;
+  }
+
+  .calendar-table .cal-name .helper-tag {
+    margin-left: 0.1rem;
+  }
+
+  .calendar-table .cal-group {
+    width: clamp(3.25rem, 5vw, 3.75rem);
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+}
+
 .cal-name {
   white-space: nowrap;
   padding: 0.05rem 0;
@@ -1425,9 +1655,75 @@ kbd {
 }
 
 @media (max-width: 760px) {
+  #app-root {
+    padding: 1rem 0.85rem calc(1.25rem + env(safe-area-inset-bottom));
+  }
+
   .app-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .app-header-user {
+    width: 100%;
+    gap: 0.35rem;
+  }
+
+  .user-badge {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .tab-bar {
+    display: flex;
+    flex-wrap: nowrap;
+    width: calc(100% + 0.2rem);
+    max-width: none;
+    margin-right: -0.2rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-bar button {
+    flex: 0 0 auto;
+  }
+
+  .page-header {
+    margin-bottom: var(--space-3);
+  }
+
+  .page-section {
+    margin-top: var(--space-4);
+  }
+
+  .action-row {
+    align-items: stretch;
+  }
+
+  .action-row .inline-primary {
+    width: 100%;
+  }
+
+  /* Admin and member request calendars share the same touch target rhythm. */
+  .request-editor.is-member .request-mobile-weekdays span {
+    padding: 0.5rem 0;
+  }
+
+  .request-editor.is-member .request-mobile-day {
+    min-height: 4.6rem;
+    padding: 0.35rem;
+  }
+
+  .request-editor.is-member .request-mobile-shift {
+    min-width: 1.35rem;
+    min-height: 1.25rem;
+    padding: 0.08rem 0.2rem;
+    font-size: 0.62rem;
   }
 
   .guide-keyboard {
@@ -1748,7 +2044,6 @@ kbd {
     grid-template-columns: 1fr;
   }
 
-  .request-editor.is-member .request-mobile-day,
   .member-month-day { min-height: 3.6rem; padding: .22rem; }
 
   .member-month-calendar.is-mine .member-month-day-duty { min-height: 2rem; }
@@ -1802,3 +2097,31 @@ kbd {
   gap: .4rem .75rem;
   margin-top: .55rem;
 }
+
+/* 관리자 사용법 모달 (헤더 '?' 버튼) */
+.help-modal { display: none; position: fixed; inset: 0; z-index: 200; }
+.help-modal.is-open { display: block; }
+.help-modal-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: rgba(31, 27, 46, .42); }
+.help-modal-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(34rem, calc(100% - 2rem));
+  max-height: min(80vh, 42rem);
+  overflow-y: auto;
+  padding: 1rem 1.25rem 1.25rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.help-modal-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: .8rem; }
+.help-modal-heading strong { font-size: 1.05rem; }
+.help-modal-heading button { padding: .25rem .55rem; border: 0; background: none; font-size: 1.4rem; line-height: 1; cursor: pointer; }
+.help-modal-body h3 { margin: 1.1rem 0 .5rem; }
+.help-modal-body h3:first-child { margin-top: 0; }
+.help-steps { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .35rem; }
+.help-defs { margin: 0; }
+.help-defs dt { font-weight: 700; margin-top: .7rem; }
+.help-defs dt:first-child { margin-top: 0; }
+.help-defs dd { margin: .2rem 0 0; color: var(--ink-muted); }

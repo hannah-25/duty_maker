@@ -58,6 +58,19 @@ def test_active_slot_mirrors_current_month_archive(local_store):
     assert reloaded["schedule_result"].assignments[("Kim", date(2026, 7, 1))] is ShiftType.D
 
 
+def test_load_ward_state_normalizes_null_schedule_signatures(local_store):
+    ward = local_store
+    state_path = persistence._ward_dir(ward) / "app_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        '{"version": 1, "schedule_signatures": null}', encoding="utf-8"
+    )
+
+    state = load_ward_state(ward)
+
+    assert state["schedule_signatures"] == {}
+
+
 def test_schedule_survives_month_round_trip(local_store):
     ward = local_store
     admin = CurrentUser(ward, "admin", True)

@@ -11,8 +11,10 @@ export async function renderRequirements(container) {
 
 function paint(container) {
   container.innerHTML = `
-    <h2 style="font-size:1.15rem">인원·규칙</h2>
-    <p class="caption">근무표 생성에 쓰는 연월, 평일/주말 필요 인원·차지, 공휴일, 날짜별 예외를 관리합니다.</p>
+    <header class="page-header">
+      <h2>인원·규칙</h2>
+      <p class="caption">근무표 생성에 쓰는 연월, 평일/주말 필요 인원·차지, 공휴일, 날짜별 예외를 관리합니다.</p>
+    </header>
 
     <div class="requirements-grid">
       <label>
@@ -40,9 +42,9 @@ function paint(container) {
     <div id="override-rows"></div>
     <button id="add-override-btn">+ 예외 추가</button>
 
-    <div style="margin-top:1.4rem">
+    <div class="action-row">
       <button class="primary inline-primary" id="save-requirements-btn">저장</button>
-      <span id="requirements-status" class="caption" style="margin:0 0 0 0.8rem"></span>
+      <span id="requirements-status" class="caption status-message"></span>
     </div>
   `;
 
