@@ -14,7 +14,7 @@ from core.models import (
 )
 
 # 근무 배정 변수 카테고리. 연차(AL)도 모델 변수로 직접 다룬다:
-# O는 목표 오프일수까지의 정규 휴무, AL은 그 초과분(오프 상한 하드에 막힌 잉여 휴식).
+# O는 월간 목표 개수로 고정되는 정규 휴무이며, AL은 별도 연차 휴식이다.
 MODEL_SHIFTS = (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S, ShiftType.O, ShiftType.AL)
 
 # 소프트 벌점 가중치 (상대적 우선순위가 중요)
@@ -40,7 +40,7 @@ WEIGHT_TRINITY_A_PAIR_SHORTFALL = 30_000
 WEIGHT_TRINITY_A_PAIR_CONCENTRATION = 8_000
 
 # 병동별 제약 설정 기본값 — 병동마다 다르게 켜고 끌 수 있다.
-# (오프 상한은 항상 적용되는 규칙이라 설정에 없음.
+# (월간 오프 목표는 항상 적용되는 규칙이라 설정에 없음.
 #  월 나이트 상한은 명단의 개인 N상한으로 대체되어 별도 설정이 없음.)
 # 근무별 차지 가능자 최소 인원 (평일/주말 각각). 모든 근무엔 charge_placement로
 # 최소 1명이 이미 보장되므로, 이 값은 "그 이상"을 요구할 때만 의미가 있다.
@@ -166,6 +166,12 @@ class ScheduleModel:
         self._rule_staffing_range()
         self._rule_charge_placement()
         self._rule_charge_minimum()
+        self._rule_senior_same_shift_cap()
+        self._rule_s_eligibility()
+        self._rule_weekday_only()
+        self._rule_al_target()
+        self._rule_off_cap()
+        self._rule_helpers()
 
     def add_fixed_assignments(
         self,
@@ -193,12 +199,6 @@ class ScheduleModel:
             ]
             if change_terms:
                 self._enforce(self.model.Add(sum(change_terms) >= 1), lit)
-        self._rule_senior_same_shift_cap()
-        self._rule_s_eligibility()
-        self._rule_weekday_only()
-        self._rule_al_target()
-        self._rule_off_cap()
-        self._rule_helpers()
 
     def _rule_helpers(self):
         """외부 병동 헬퍼의 근무를 고정한다.
@@ -502,7 +502,7 @@ class ScheduleModel:
             self._enforce(self.model.Add(al_count == nurse.al_target), lit)
 
     def _rule_off_cap(self):
-        """개인별 O 개수는 목표 오프일수를 초과 불가 — 초과 휴식은 연차(AL)로만.
+        """개인별 O 개수는 목표 오프일수와 정확히 일치해야 한다.
 
         헬퍼와 나이트 전담은 제외한다 — 헬퍼는 비근무일이 곧 빈칸(O)이고, 나이트 전담은
         나이트 외 날이 전부 오프라 목표 오프일수를 훨씬 넘기는 게 정상이다.
@@ -514,7 +514,9 @@ class ScheduleModel:
                 continue
             target = self.off_target.get(nurse.name, 0)
             o_count = sum(self.val(nurse.name, d, ShiftType.O) for d in self.current_days)
-            self._enforce(self.model.Add(o_count <= target), lit)
+            # The monthly OFF target is a Tier 1 hard constraint.  Annual leave
+            # is separate rest time and must never be used in place of an OFF.
+            self._enforce(self.model.Add(o_count == target), lit)
 
     def apply_assumptions(self):
         """(진단 모드 전용) 모든 Tier1 카테고리를 True로 가정 (Infeasible 원인 진단용)."""
@@ -543,20 +545,6 @@ class ScheduleModel:
         self._soft_al_excess(extra_al_allowance)
         self._soft_al_balance()
         self._soft_trinity_a_pair_overlap()
-
-    def _soft_off_shortfall(self):
-        """O가 목표 오프일수에 못 미치면 매우 무거운 벌점 (실행불가 회피용 최후수단).
-
-        헬퍼는 오프 목표가 없으므로 제외한다.
-        """
-        for nurse in self.nurses:
-            if nurse.is_helper:
-                continue
-            target = self.off_target.get(nurse.name, 0)
-            o_count = sum(self.val(nurse.name, d, ShiftType.O) for d in self.current_days)
-            shortfall = self.model.NewIntVar(0, len(self.current_days), f"off_shortfall_{nurse.name}")
-            self.model.Add(shortfall >= target - o_count)
-            self.penalties.append(("off_shortfall", WEIGHT_OFF_SHORTFALL, shortfall))
 
     def _soft_avoid_isolated_night(self):
         """나이트는 왠만하면 2~3일씩 붙여서 배정하고, 단독 1일짜리 나이트는 피한다."""

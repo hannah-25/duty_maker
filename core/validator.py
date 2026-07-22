@@ -195,9 +195,9 @@ def validate_schedule(
         if n.al_target is not None and al_count != n.al_target:
             v.append(f"{n.name}: 연차 {al_count}개 != 목표 {n.al_target}개")
         target = off_target.get(n.name, 0)
-        # 나이트 전담은 나이트 외 날이 전부 오프라 오프 상한 대상이 아니다.
-        if not getattr(n, "is_night_dedicated", False) and o_count > target:
-            v.append(f"{n.name}: O {o_count}개 > 목표 {target}개 (초과분은 연차여야 함)")
+        # 나이트 전담은 나이트 외 날이 전부 오프라 월간 오프 목표 대상이 아니다.
+        if not getattr(n, "is_night_dedicated", False) and o_count != target:
+            v.append(f"{n.name}: O {o_count}개 != 목표 {target}개")
 
     # --- 통계 ----------------------------------------------------------------
     per_nurse = {}
