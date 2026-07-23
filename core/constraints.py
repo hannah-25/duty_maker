@@ -46,6 +46,7 @@ WEIGHT_TRINITY_A_PAIR_CONCENTRATION = 8_000
 # 근무별 차지 가능자 최소 인원 (평일/주말 각각). 모든 근무엔 charge_placement로
 # 최소 1명이 이미 보장되므로, 이 값은 "그 이상"을 요구할 때만 의미가 있다.
 DEFAULT_WARD_SETTINGS = {
+    "use_s_shift": True,
     "weekday_charge_D": 2,
     "weekday_charge_E": 1,
     "weekday_charge_N": 1,
@@ -168,6 +169,7 @@ class ScheduleModel:
         self._rule_charge_placement()
         self._rule_charge_minimum()
         self._rule_senior_same_shift_cap()
+        self._rule_s_enabled()
         self._rule_s_eligibility()
         self._rule_weekday_only()
         self._rule_al_target()
@@ -475,6 +477,15 @@ class ScheduleModel:
         for nurse in self.nurses:
             if nurse.level in (NurseLevel.JUNIOR, NurseLevel.NEW_JUNIOR):
                 continue
+            for day in self.current_days:
+                self._enforce(self.model.Add(self.val(nurse.name, day, ShiftType.S) == 0), lit)
+
+    def _rule_s_enabled(self):
+        """S 미사용 병동에서는 누구에게도 S를 배정하지 않는다."""
+        if self.settings.get("use_s_shift", True):
+            return
+        lit = self._assumption("s_enabled")
+        for nurse in self.nurses:
             for day in self.current_days:
                 self._enforce(self.model.Add(self.val(nurse.name, day, ShiftType.S) == 0), lit)
 

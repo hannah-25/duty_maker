@@ -12,9 +12,9 @@ from core.sample_data import ward_templates
 _CHARGE_SHIFTS = ("D", "E", "N")
 
 
-def default_charge_minimums(ss: dict) -> dict[str, int]:
+def default_charge_minimums(ss: dict) -> dict[str, int | bool]:
     """근무별 차지 최소 기본값 = 해당 근무 목표 인원 ÷ 2 (내림). 평일/주말 각각."""
-    out: dict[str, int] = {}
+    out: dict[str, int | bool] = {"use_s_shift": True}
     for prefix, key in (("weekday", "weekday_template"), ("weekend", "weekend_template")):
         template = ss.get(key)
         for i, shift in enumerate(_CHARGE_SHIFTS):
@@ -23,13 +23,13 @@ def default_charge_minimums(ss: dict) -> dict[str, int]:
     return out
 
 
-def resolve_ward_settings(ss: dict) -> dict[str, int]:
+def resolve_ward_settings(ss: dict) -> dict[str, int | bool]:
     """병동 제약 설정을 확정한다: 저장된 값이 있으면 그것, 없으면 목표÷2 기본값."""
     stored = ss.get("constraint_settings") or {}
     resolved = default_charge_minimums(ss)
     for key in list(resolved):
         if stored.get(key) is not None:
-            resolved[key] = int(stored[key])
+            resolved[key] = bool(stored[key]) if key == "use_s_shift" else int(stored[key])
     return resolved
 
 

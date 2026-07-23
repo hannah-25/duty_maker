@@ -51,6 +51,20 @@ def test_requests_for_target_month_excludes_requests_from_previous_month():
     assert _requests_for_target_month(state) == [august]
 
 
+def test_requests_for_target_month_hides_legacy_s_request():
+    day = date(2026, 8, 1)
+    state = {
+        "year": 2026,
+        "month": 8,
+        "duty_requests": [
+            _request("Kim", day, "prefer", ShiftType.S),
+            _request("Kim", day, "prefer", ShiftType.D),
+        ],
+    }
+
+    assert _requests_for_target_month(state) == [state["duty_requests"][1]]
+
+
 def test_apply_request_cells_replaces_only_its_bucket_and_opposite_kind():
     target_day = date(2026, 7, 10)
     requests = [

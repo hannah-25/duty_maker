@@ -131,6 +131,35 @@ def test_exact_off_allows_staffing_target_shortfall_within_hard_range():
     )
 
 
+def test_s_disabled_is_a_hard_constraint():
+    nurse = Nurse(name="junior", level=NurseLevel.JUNIOR)
+    day = date(2026, 1, 5)
+    requirements = {
+        day: DayRequirement(day, ShiftRequirement(1), ShiftRequirement(0), ShiftRequirement(0))
+    }
+    sm = ScheduleModel(
+        [nurse],
+        [day],
+        [],
+        {},
+        requirements,
+        {nurse.name: 0},
+        settings={
+            "use_s_shift": False,
+            "weekday_charge_D": 0,
+            "weekday_charge_E": 0,
+            "weekday_charge_N": 0,
+            "weekend_charge_D": 0,
+            "weekend_charge_E": 0,
+            "weekend_charge_N": 0,
+        },
+    )
+    sm.add_tier1_hard_constraints()
+    sm.model.Add(sm.val(nurse.name, day, ShiftType.S) == 1)
+
+    assert cp_model.CpSolver().Solve(sm.model) == cp_model.INFEASIBLE
+
+
 def _night_off_return_penalty_for(sequence):
     nurse = Nurse(name="a", can_charge=True)
     days = [date(2026, 1, i) for i in range(1, len(sequence) + 1)]

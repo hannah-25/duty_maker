@@ -56,7 +56,10 @@ def _requests_for_target_month(ss: dict) -> list[DutyRequest]:
     year = int(ss.get("year", 2026))
     month = int(ss.get("month", 7))
     valid_days = set(month_dates(year, month))
-    return [req for req in ss.get("duty_requests", []) if req.day in valid_days]
+    return [
+        req for req in ss.get("duty_requests", [])
+        if req.day in valid_days and req.requested_shift in VALID_REQUEST_SHIFTS
+    ]
 
 
 def _out(ss: dict, user: CurrentUser) -> DutyRequestsOut:

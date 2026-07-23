@@ -34,6 +34,15 @@ function paint(container) {
     </div>
     <p class="caption">'차지'는 그 근무의 차지 가능자 최소 인원입니다. 모든 근무엔 최소 1명이 항상 배치됩니다.</p>
 
+    <section class="panel">
+      <h3>보조근무</h3>
+      <label class="inline-check">
+        <input type="checkbox" id="use-s-shift" ${settings.use_s_shift !== false ? "checked" : ""} />
+        S 근무 사용
+      </label>
+      <p class="caption">끄면 S는 배정되지 않습니다. 켜면 S는 저연차 간호사에게만 배정되고 D 인원에 포함됩니다.</p>
+    </section>
+
     <h3>공휴일</h3>
     <div id="holiday-rows" class="check-list"></div>
 
@@ -191,6 +200,7 @@ function collect(container) {
   );
   // 근무별 차지 최소 인원(병동 규칙)도 함께 수집.
   const next = { ...settings };
+  next.use_s_shift = container.querySelector("#use-s-shift").checked;
   for (const input of container.querySelectorAll("[data-charge]")) {
     next[input.dataset.charge] = Number(input.value);
   }

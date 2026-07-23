@@ -142,6 +142,7 @@ def _infeasibility_messages(ss: dict, categories: list[str]) -> list[str]:
         "staffing_range": "일별 최소/최대 인력 조건이 충돌합니다.",
         "charge_placement": "필요한 차지 간호사를 각 근무에 배치할 수 없습니다.",
         "charge_minimum": "근무별 차지 간호사 최소 인원 조건을 충족할 수 없습니다.",
+        "s_enabled": "S 미사용 설정 때문에 S 배정이 허용되지 않습니다.",
         "allowed_shifts": "개인별 가능한 근무 종류 제한 때문에 배정할 수 없습니다.",
     }
     for category in categories:
@@ -221,6 +222,7 @@ def _requests_for_month(
         if req.nurse_name in nurse_names
         and req.day.year == year
         and req.day.month == month
+        and req.requested_shift in (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.O)
     ]
 
 
@@ -452,6 +454,8 @@ def update_assignments(
             shift = ShiftType(edit.shift)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "지원하지 않는 근무 코드입니다.") from exc
+        if shift == ShiftType.S and not _solver_settings(ss, user).get("use_s_shift", True):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "S 미사용 설정에서는 S로 편집할 수 없습니다.")
         # 수동 편집은 한 칸씩(증분) 이뤄지므로, 인원 하한·상한은 여기서 하드로
         # 막지 않는다(그러면 다중 칸 재배치의 중간 상태가 전부 거부된다).
         # 위반은 검증 리포트의 '일별 인원 기준' 경고로 관리자에게 표시된다.

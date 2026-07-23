@@ -312,6 +312,7 @@ class ScheduleOut(BaseModel):
 
 
 class WardSettings(BaseModel):
+    use_s_shift: bool = True
     weekday_charge_D: int = Field(default=2, ge=0, le=5)
     weekday_charge_E: int = Field(default=1, ge=0, le=5)
     weekday_charge_N: int = Field(default=1, ge=0, le=5)

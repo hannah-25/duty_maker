@@ -4,6 +4,7 @@ import pytest
 
 from api.deps import CurrentUser
 from api.routers import schedule as schedule_router
+from api.routers import settings as settings_router
 from api.routers.schedule import (
     TRINITY_A_WARD_ID,
     _manual_assignments,
@@ -11,9 +12,28 @@ from api.routers.schedule import (
     _solver_settings,
     _validate_selected_cells,
 )
-from api.schemas import ScheduleCellEditIn, ScheduleCellIn, ScheduleEditBatchIn, ScheduleOut
+from api.schemas import ScheduleCellEditIn, ScheduleCellIn, ScheduleEditBatchIn, ScheduleOut, WardSettings
 from core.models import DutyRequest, Nurse, ScheduleResult, ShiftType
 from core.constraints import merge_ward_settings
+
+
+def test_disabling_s_invalidates_schedule_previews(monkeypatch):
+    state = {
+        "constraint_settings": {},
+        "schedule_revision": 7,
+        "schedule_previews": {"stale": {}},
+    }
+    monkeypatch.setattr(settings_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(settings_router, "save_ward_state", lambda *_: None)
+
+    result = settings_router.put_settings(
+        WardSettings(use_s_shift=False), CurrentUser("ward", "admin", True)
+    )
+
+    assert result.use_s_shift is False
+    assert state["constraint_settings"]["use_s_shift"] is False
+    assert state["schedule_revision"] == 8
+    assert state["schedule_previews"] == {}
 
 
 def test_requests_for_month_excludes_previous_month_and_unknown_nurses():
@@ -26,6 +46,15 @@ def test_requests_for_month_excludes_previous_month_and_unknown_nurses():
     result = _requests_for_month({"duty_requests": requests}, {"Kim"}, 2026, 8)
 
     assert result == [requests[1]]
+
+
+def test_requests_for_month_excludes_legacy_s_request():
+    requests = [
+        DutyRequest("Kim", date(2026, 8, 1), ShiftType.S),
+        DutyRequest("Kim", date(2026, 8, 1), ShiftType.D),
+    ]
+
+    assert _requests_for_month({"duty_requests": requests}, {"Kim"}, 2026, 8) == [requests[1]]
 
 
 def test_manual_assignments_reads_only_current_month():
