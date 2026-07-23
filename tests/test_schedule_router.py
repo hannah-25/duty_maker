@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+from fastapi import HTTPException
 
 from api.deps import CurrentUser
 from api.routers import schedule as schedule_router
@@ -87,6 +88,7 @@ def test_manual_assignment_pins_cell_and_increments_revision(monkeypatch):
     }
     monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
     monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_: {"Kim": 0})
     monkeypatch.setattr(schedule_router, "_staffing_violations", lambda *_: [], raising=False)
     monkeypatch.setattr(
         schedule_router, "_schedule_out",
@@ -116,6 +118,7 @@ def test_manual_assignment_without_pin_does_not_add_override(monkeypatch):
     }
     monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
     monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_: {"Kim": 0})
     monkeypatch.setattr(
         schedule_router, "_schedule_out",
         lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
@@ -144,6 +147,7 @@ def test_manual_assignment_unpin_removes_override_keeps_value(monkeypatch):
     }
     monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
     monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_: {"Kim": 0})
     monkeypatch.setattr(
         schedule_router, "_schedule_out",
         lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
@@ -164,7 +168,7 @@ def test_manual_assignment_unpin_removes_override_keeps_value(monkeypatch):
 def test_manual_assignment_converts_excess_off_to_annual_leave(monkeypatch):
     days = [date(2026, 7, d) for d in range(1, 32)]
     # 7월 목표 오프(주말)는 8일. 이미 8일을 오프로 채워둔 상태에서 9번째 오프를
-    # 추가로 지정하면, 오프 상한 초과분은 오프가 아니라 연차로 저장돼야 한다.
+    # 추가로 지정하면 초과분만 오프가 아니라 연차로 저장돼야 한다.
     assignments = {("Kim", d): ShiftType.D for d in days}
     for d in days[:8]:
         assignments[("Kim", d)] = ShiftType.O
@@ -191,6 +195,66 @@ def test_manual_assignment_converts_excess_off_to_annual_leave(monkeypatch):
 
     assert state["schedule_result"].assignments[("Kim", new_off_day)] == ShiftType.AL
     assert state["manual_overrides"][f"Kim|{new_off_day.isoformat()}"] == "연차"
+
+
+def test_manual_assignment_allows_off_swap_in_one_batch(monkeypatch):
+    days = [date(2026, 7, d) for d in range(1, 32)]
+    assignments = {("Kim", d): ShiftType.D for d in days}
+    for d in days[:8]:
+        assignments[("Kim", d)] = ShiftType.O
+    old_off_day, new_off_day = days[0], days[8]
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 1, "manual_overrides": {},
+        "schedule_previews": {}, "nurses": [Nurse("Kim")], "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=True, assignments=assignments),
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(
+        schedule_router, "_schedule_out",
+        lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
+    )
+
+    schedule_router.update_assignments(
+        ScheduleEditBatchIn(
+            expected_revision=1,
+            edits=[
+                ScheduleCellEditIn(nurse_name="Kim", date=old_off_day.isoformat(), shift="D", pinned=True),
+                ScheduleCellEditIn(nurse_name="Kim", date=new_off_day.isoformat(), shift="O", pinned=True),
+            ],
+        ),
+        CurrentUser("ward", "admin", True),
+    )
+
+    assert state["schedule_result"].assignments[("Kim", old_off_day)] is ShiftType.D
+    assert state["schedule_result"].assignments[("Kim", new_off_day)] is ShiftType.O
+    assert sum(shift is ShiftType.O for shift in state["schedule_result"].assignments.values()) == 8
+
+
+def test_manual_assignment_rejects_off_shortfall(monkeypatch):
+    days = [date(2026, 7, d) for d in range(1, 32)]
+    assignments = {("Kim", d): ShiftType.D for d in days}
+    for d in days[:8]:
+        assignments[("Kim", d)] = ShiftType.O
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 1, "manual_overrides": {},
+        "schedule_previews": {}, "nurses": [Nurse("Kim")], "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=True, assignments=assignments),
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+
+    with pytest.raises(HTTPException, match="오프는 개인별 목표보다 적을 수 없습니다"):
+        schedule_router.update_assignments(
+            ScheduleEditBatchIn(
+                expected_revision=1,
+                edits=[ScheduleCellEditIn(nurse_name="Kim", date=days[0].isoformat(), shift="D", pinned=True)],
+            ),
+            CurrentUser("ward", "admin", True),
+        )
+
+    assert state["schedule_result"].assignments[("Kim", days[0])] is ShiftType.O
+    assert state["manual_overrides"] == {}
 
 
 def test_trinity_pair_preference_is_limited_to_trinity_a(monkeypatch):

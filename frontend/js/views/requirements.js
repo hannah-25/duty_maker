@@ -40,7 +40,7 @@ function paint(container) {
         <input type="checkbox" id="use-s-shift" ${settings.use_s_shift !== false ? "checked" : ""} />
         S 근무 사용
       </label>
-      <p class="caption">끄면 S는 배정되지 않습니다. 켜면 S는 저연차 간호사에게만 배정되고 D 인원에 포함됩니다.</p>
+      <p class="caption">끄면 S는 배정되지 않습니다. 켜면 S는 저연차 간호사에게만 별도 근무로 배정됩니다.</p>
     </section>
 
     <h3>공휴일</h3>
@@ -83,7 +83,7 @@ function paint(container) {
             <h3>소프트 제약 · 가능한 한 지킴</h3>
             <ul>
               <li>목표 인원 충족(월요일 우선), 단독 나이트와 휴식 뒤 재나이트 회피</li>
-              <li>하루 S 1명 이하 및 S 사용 최소화</li>
+              <li>S 사용 시 하루 1명 배정을 선호하고, 2명 이상은 피함</li>
               <li>시니어 이브닝·신규 저연차 동시 근무 쏠림 완화</li>
               <li>5일 연속 근무, 4일 연속 휴식, 휴식 사이 단독 근무 회피</li>
               <li>통주말 휴식 월 1회 이상(가능하면 2회) 확보</li>

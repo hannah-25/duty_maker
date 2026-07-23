@@ -160,7 +160,6 @@ def test_exact_off_allows_staffing_target_shortfall_within_hard_range():
     assert any(
         sum(
             solver.Value(sm.val(nurse.name, day, ShiftType.D))
-            + solver.Value(sm.val(nurse.name, day, ShiftType.S))
             for nurse in nurses
         ) < requirements[day].D.target
         for day in days
@@ -194,6 +193,77 @@ def test_s_disabled_is_a_hard_constraint():
     sm.model.Add(sm.val(nurse.name, day, ShiftType.S) == 1)
 
     assert cp_model.CpSolver().Solve(sm.model) == cp_model.INFEASIBLE
+
+
+def test_s_enabled_adds_s_without_replacing_d_hard_staffing():
+    """S는 별도 근무이며, D 하드 인원을 대체하면 안 된다."""
+    day = date(2026, 1, 5)
+    nurses = [
+        Nurse(name="charge", level=NurseLevel.MIDDLE),
+        Nurse(name="junior", level=NurseLevel.JUNIOR),
+    ]
+    requirements = {
+        day: DayRequirement(day, ShiftRequirement(1), ShiftRequirement(0), ShiftRequirement(0))
+    }
+    sm = ScheduleModel(
+        nurses,
+        [day],
+        [],
+        {},
+        requirements,
+        {nurse.name: 0 for nurse in nurses},
+        settings={
+            "use_s_shift": True,
+            "weekday_charge_D": 0,
+            "weekday_charge_E": 0,
+            "weekday_charge_N": 0,
+            "weekend_charge_D": 0,
+            "weekend_charge_E": 0,
+            "weekend_charge_N": 0,
+        },
+    )
+    sm.add_tier1_hard_constraints()
+    sm.add_tier2_soft_constraints()
+    sm.model.Minimize(sum(sm.objective_terms()))
+    solver = cp_model.CpSolver()
+
+    assert solver.Solve(sm.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    assert sum(solver.Value(sm.val(n.name, day, ShiftType.D)) for n in nurses) == 1
+    assert sum(solver.Value(sm.val(n.name, day, ShiftType.S)) for n in nurses) == 1
+
+
+def test_weekday_and_weekend_hard_staffing_ranges_are_independent():
+    """평일·주말의 입력값은 각각의 하드 하한·상한으로 적용된다."""
+    weekday, weekend = date(2026, 1, 9), date(2026, 1, 10)
+    nurses = [Nurse(name=f"n{i}", level=NurseLevel.MIDDLE) for i in range(4)]
+    requirements = {
+        weekday: DayRequirement(weekday, ShiftRequirement(3), ShiftRequirement(1), ShiftRequirement(0)),
+        weekend: DayRequirement(weekend, ShiftRequirement(2), ShiftRequirement(2), ShiftRequirement(0)),
+    }
+    sm = ScheduleModel(
+        nurses,
+        [weekday, weekend],
+        [],
+        {},
+        requirements,
+        {nurse.name: 0 for nurse in nurses},
+        settings={
+            "use_s_shift": False,
+            "weekday_charge_D": 0,
+            "weekday_charge_E": 0,
+            "weekday_charge_N": 0,
+            "weekend_charge_D": 0,
+            "weekend_charge_E": 0,
+            "weekend_charge_N": 0,
+        },
+    )
+    sm.add_tier1_hard_constraints()
+    solver = cp_model.CpSolver()
+
+    assert solver.Solve(sm.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    for day in (weekday, weekend):
+        assert sum(solver.Value(sm.val(n.name, day, ShiftType.D)) for n in nurses) == requirements[day].D.minimum
+        assert sum(solver.Value(sm.val(n.name, day, ShiftType.E)) for n in nurses) == requirements[day].E.minimum
 
 
 def _night_off_return_penalty_for(sequence):
@@ -292,10 +362,10 @@ def test_daily_staffing_meets_hard_minimums(solved):
     assert result.feasible
 
     for day, req in requirements.items():
-        d = sum(result.assignments[(nurse.name, day)] in (ShiftType.D, ShiftType.S) for nurse in nurses)
+        d = sum(result.assignments[(nurse.name, day)] is ShiftType.D for nurse in nurses)
         e = sum(result.assignments[(nurse.name, day)] is ShiftType.E for nurse in nurses)
         n = sum(result.assignments[(nurse.name, day)] is ShiftType.N for nurse in nurses)
-        assert d >= req.D.minimum, f"{day}: D+S={d}"
+        assert d >= req.D.minimum, f"{day}: D={d}"
         assert e >= req.E.minimum, f"{day}: E={e}"
         assert n >= req.N.minimum, f"{day}: N={n}"
 
@@ -306,9 +376,8 @@ def test_daily_staffing_within_range(solved):
         req = requirements[day]
         d = sum(1 for n in nurses if result.assignments[(n.name, day)] == ShiftType.D)
         e = sum(1 for n in nurses if result.assignments[(n.name, day)] == ShiftType.E)
-        s = sum(1 for n in nurses if result.assignments[(n.name, day)] == ShiftType.S)
-        # S는 데이 보조라 D에만 포함, E는 순수 이브닝만. 하한~상한 하드.
-        assert req.D.minimum <= d + s <= req.D.maximum, f"{day}: D+S={d + s}"
+        # S는 D/E/N 인원 규칙과 별개로 추가 배정된다.
+        assert req.D.minimum <= d <= req.D.maximum, f"{day}: D={d}"
         assert req.E.minimum <= e <= req.E.maximum, f"{day}: E={e}"
 
 

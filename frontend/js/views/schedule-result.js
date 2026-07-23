@@ -15,9 +15,10 @@ const CALENDAR_GROUPS = [
   ["N", "night"],
   ["S", "S"],
 ];
-const EDITABLE_SHIFTS = ["D", "E", "N", "O", "연차"];
+const BASE_EDITABLE_SHIFTS = ["D", "E", "N", "O", "연차"];
 
 let current = null;
+let wardSettings = null;
 let viewMode = "grid"; // "grid" | "calendar" — 세션 동안만 유지
 let scheduleScope = "all"; // "mine" | "all"
 let regionMode = false;
@@ -32,7 +33,11 @@ let scheduleEditMode = false;
 let editDraft = null;
 
 export async function renderScheduleResult(container) {
-  [current, exportSettings] = await Promise.all([api.getSchedule(), api.getExportSettings()]);
+  [current, exportSettings, wardSettings] = await Promise.all([
+    api.getSchedule(),
+    api.getExportSettings(),
+    api.getSettings(),
+  ]);
   viewMode = state.isAdmin ? "grid" : "calendar";
   scheduleScope = state.isAdmin ? "all" : "mine";
   regionMode = false;
@@ -42,6 +47,12 @@ export async function renderScheduleResult(container) {
   scheduleEditMode = false;
   editDraft = null;
   paint(container);
+}
+
+function editableShiftsFor(nurseName) {
+  const canAssignS = wardSettings?.use_s_shift !== false
+    && current?.s_eligible_names?.includes(nurseName);
+  return canAssignS ? ["D", "E", "N", "S", "O", "연차"] : BASE_EDITABLE_SHIFTS;
 }
 
 function paint(container) {
@@ -900,7 +911,7 @@ function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, 
       const isEditing = editingCell?.nurse_name === name && editingCell?.date === date;
       const editor = isEditing ? `
         <div class="schedule-duty-editor" role="group" aria-label="${escapeHtml(name)} ${date} 근무 변경">
-          ${EDITABLE_SHIFTS.map((value) => `<button type="button" data-assignment-shift="${escapeHtml(value)}" data-nurse="${escapeHtml(name)}" data-date="${date}" ${value === shift ? "disabled" : ""}>${escapeHtml(value)}</button>`).join("")}
+          ${editableShiftsFor(name).map((value) => `<button type="button" data-assignment-shift="${escapeHtml(value)}" data-nurse="${escapeHtml(name)}" data-date="${date}" ${value === shift ? "disabled" : ""}>${escapeHtml(value)}</button>`).join("")}
         </div>` : "";
       const display = regionRow == null ? content : `
         <button type="button" class="schedule-duty-cell-button" data-duty-editor-toggle data-nurse="${escapeHtml(name)}" data-date="${date}" aria-expanded="${isEditing}" aria-label="${escapeHtml(name)} ${date} 근무 ${escapeHtml(shift)} 변경">

@@ -30,6 +30,7 @@ from api.state_store import (
 from core.models import (
     DayRequirement,
     DutyRequest,
+    NurseLevel,
     ShiftRequirement,
     ShiftType,
     build_month_requirements,
@@ -249,6 +250,26 @@ def _manual_assignments(ss: dict, year: int, month: int) -> dict[tuple[str, date
     return assignments
 
 
+def _off_target_shortfalls(
+    ss: dict,
+    assignments: dict[tuple[str, date], ShiftType],
+    year: int,
+    month: int,
+) -> list[str]:
+    """수동 편집 후 일반 간호사의 O가 목표보다 줄지 않았는지 확인한다."""
+    targets = _off_target(ss, year, month)
+    days = month_dates(year, month)
+    mismatches = []
+    for nurse in ss.get("nurses", []):
+        if nurse.is_helper or nurse.is_night_dedicated:
+            continue
+        actual = sum(assignments.get((nurse.name, day)) == ShiftType.O for day in days)
+        target = targets.get(nurse.name, 0)
+        if actual < target:
+            mismatches.append(f"{nurse.name}: O {actual}개 (목표 {target}개)")
+    return mismatches
+
+
 def _validate_selected_cells(ss: dict, cells, year: int, month: int) -> set[tuple[str, date]]:
     nurses = {nurse.name for nurse in ss.get("nurses", []) if not nurse.is_helper}
     selected: set[tuple[str, date]] = set()
@@ -372,6 +393,11 @@ def _schedule_out(ss: dict, user: CurrentUser) -> ScheduleOut:
         assistant_rows=assistant_rows,
         charge_cells=_charge_cells(ss, result),
         helper_names=[n.name for n in ss.get("nurses", []) if n.is_helper],
+        s_eligible_names=[
+            n.name
+            for n in ss.get("nurses", [])
+            if n.level in (NurseLevel.JUNIOR, NurseLevel.NEW_JUNIOR)
+        ],
         manual_override_cells=sorted((ss.get("manual_overrides") or {}).keys()),
     )
     if not user.is_admin:
@@ -445,7 +471,7 @@ def update_assignments(
         raise HTTPException(status.HTTP_409_CONFLICT, "근무표가 변경되었습니다. 새로고침 후 다시 시도하세요.")
     year, month = int(ss["year"]), int(ss["month"])
     _validate_selected_cells(ss, body.edits, year, month)
-    overrides = ss.setdefault("manual_overrides", {})
+    overrides = dict(ss.get("manual_overrides") or {})
     candidate_assignments = dict(result.assignments)
     for edit in body.edits:
         key = (edit.nurse_name, date.fromisoformat(edit.date))
@@ -454,8 +480,12 @@ def update_assignments(
             shift = ShiftType(edit.shift)
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "지원하지 않는 근무 코드입니다.") from exc
-        if shift == ShiftType.S and not _solver_settings(ss, user).get("use_s_shift", True):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "S 미사용 설정에서는 S로 편집할 수 없습니다.")
+        if shift == ShiftType.S:
+            if not _solver_settings(ss, user).get("use_s_shift", True):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "S 미사용 설정에서는 S로 편집할 수 없습니다.")
+            nurse = next((n for n in ss.get("nurses", []) if n.name == edit.nurse_name), None)
+            if nurse is None or nurse.level not in (NurseLevel.JUNIOR, NurseLevel.NEW_JUNIOR):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "S는 저연차 또는 신규 저연차 간호사에게만 배정할 수 있습니다.")
         # 수동 편집은 한 칸씩(증분) 이뤄지므로, 인원 하한·상한은 여기서 하드로
         # 막지 않는다(그러면 다중 칸 재배치의 중간 상태가 전부 거부된다).
         # 위반은 검증 리포트의 '일별 인원 기준' 경고로 관리자에게 표시된다.
@@ -480,6 +510,13 @@ def update_assignments(
             overrides[override_key] = shift.value
         else:
             overrides.pop(override_key, None)
+    off_shortfalls = _off_target_shortfalls(ss, candidate_assignments, year, month)
+    if off_shortfalls:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "오프는 개인별 목표보다 적을 수 없습니다. " + ", ".join(off_shortfalls),
+        )
+    ss["manual_overrides"] = overrides
     result.assignments = candidate_assignments
     active_requests = [
         request for request in _requests_for_month(

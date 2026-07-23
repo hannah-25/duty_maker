@@ -76,9 +76,9 @@ def validate_schedule(
         req = requirements[d]
         cnt = {s: sum(1 for n in nurses if shift(n.name, d) == s) for s in WORKING}
         daily_counts[d] = cnt
-        # 하한~상한 하드 범위 검증. S는 데이 보조라 D에만 포함, E는 순수 이브닝만.
-        if not (req.D.minimum <= cnt[ShiftType.D] + cnt[ShiftType.S] <= req.D.maximum):
-            v.append(f"{d}: D+S={cnt[ShiftType.D]}+{cnt[ShiftType.S]} (허용 {req.D.minimum}~{req.D.maximum})")
+        # D/E/N의 하한~상한은 S와 별개로 하드 검증한다.
+        if not (req.D.minimum <= cnt[ShiftType.D] <= req.D.maximum):
+            v.append(f"{d}: D={cnt[ShiftType.D]} (허용 {req.D.minimum}~{req.D.maximum})")
         if not (req.E.minimum <= cnt[ShiftType.E] <= req.E.maximum):
             v.append(f"{d}: E={cnt[ShiftType.E]} (허용 {req.E.minimum}~{req.E.maximum})")
         if not (req.N.minimum <= cnt[ShiftType.N] <= req.N.maximum):
@@ -192,7 +192,7 @@ def validate_schedule(
             v.append(f"{n.name}: 연차 {al_count}개 != 목표 {n.al_target}개")
         target = off_target.get(n.name, 0)
         # 나이트 전담은 나이트 외 날이 전부 오프라 월간 오프 목표 대상이 아니다.
-        if not getattr(n, "is_night_dedicated", False) and o_count != target:
+        if not getattr(n, "is_helper", False) and not getattr(n, "is_night_dedicated", False) and o_count != target:
             v.append(f"{n.name}: O {o_count}개 != 목표 {target}개")
 
     # --- 통계 ----------------------------------------------------------------
@@ -214,7 +214,7 @@ def validate_schedule(
     target_hit = sum(
         1
         for d in days
-        if daily_counts[d][ShiftType.D] + daily_counts[d][ShiftType.S] >= requirements[d].D.target
+        if daily_counts[d][ShiftType.D] >= requirements[d].D.target
         and daily_counts[d][ShiftType.E] >= requirements[d].E.target
     )
     report.stats["D/E 목표 달성일"] = f"{target_hit}/{len(days)}"
@@ -228,7 +228,7 @@ def validate_schedule(
     staffing_ok = sum(
         1
         for d in days
-        if requirements[d].D.minimum <= daily_counts[d][ShiftType.D] + daily_counts[d][ShiftType.S] <= requirements[d].D.maximum
+        if requirements[d].D.minimum <= daily_counts[d][ShiftType.D] <= requirements[d].D.maximum
         and requirements[d].E.minimum <= daily_counts[d][ShiftType.E] <= requirements[d].E.maximum
         and requirements[d].N.minimum <= daily_counts[d][ShiftType.N] <= requirements[d].N.maximum
     )
@@ -253,7 +253,7 @@ def validate_schedule(
         elif ShiftType.N in allowed and n.max_n_hard > 0:
             if seq.count(ShiftType.N) > n.max_n_hard:
                 n_range_violators.append(f"{n.name}(N {seq.count(ShiftType.N)})")
-        if not getattr(n, "is_night_dedicated", False):
+        if not getattr(n, "is_helper", False) and not getattr(n, "is_night_dedicated", False):
             o_count = seq.count(ShiftType.O)
             target = off_target.get(n.name, 0)
             if o_count != target:

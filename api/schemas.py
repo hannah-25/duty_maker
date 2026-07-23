@@ -308,6 +308,7 @@ class ScheduleOut(BaseModel):
     honored_count: int = 0
     unreflected_count: int = 0
     dropped_off_count: int = 0
+    s_eligible_names: list[str] = Field(default_factory=list)
     manual_override_cells: list[str] = Field(default_factory=list)
 
 
