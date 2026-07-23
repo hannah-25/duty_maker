@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from enum import Enum
@@ -180,6 +181,12 @@ class DutyRequest:
             raise ValueError("decision must be 'force' or 'ignore'")
         if self.priority < 1:
             raise ValueError("priority must be at least 1")
+
+
+def duty_request_id(req: DutyRequest) -> str:
+    """신청 하나를 가리키는 안정적인 id — 신청 관리 API와 진단(어떤 신청이 생성을 막는지)이 공유."""
+    key = f"{req.nurse_name}|{req.day.isoformat()}|{req.kind}|{req.requested_shift.value}"
+    return hashlib.sha1(key.encode()).hexdigest()[:20]
 
 
 @dataclass

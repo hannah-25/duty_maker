@@ -31,6 +31,8 @@ let scheduleEditMode = false;
 // 편집 세션 동안 실제로 건드린(값 변경 또는 우클릭 고정 토글) 셀만 담는다 — 저장 전까지
 // 서버에는 아무것도 전달되지 않는다. { edits: Map<"이름|날짜", { nurse_name, date, shift, pinned }> }
 let editDraft = null;
+let draftValidation = null;
+let draftValidationRequest = 0;
 
 export async function renderScheduleResult(container) {
   [current, exportSettings, wardSettings] = await Promise.all([
@@ -46,6 +48,8 @@ export async function renderScheduleResult(container) {
   editingCell = null;
   scheduleEditMode = false;
   editDraft = null;
+  draftValidation = null;
+  draftValidationRequest += 1;
   paint(container);
 }
 
@@ -84,6 +88,8 @@ function paint(container) {
           // 옛 셀 값이 새 근무표 위에 겹쳐 보여 집계가 어긋난다.
           scheduleEditMode = false;
           editDraft = null;
+          draftValidation = null;
+          draftValidationRequest += 1;
           editingCell = null;
           paint(container);
         } catch (err) {
@@ -272,7 +278,9 @@ function paintSchedule(container, initialPosition = null) {
     body.innerHTML = `
       <div class="error-banner">실행 가능한 근무표를 찾지 못했습니다.</div>
       <pre class="plain-list">${escapeHtml(current.infeasible_categories.join("\n"))}</pre>
+      ${infeasibleRelaxationsHTML()}
     `;
+    if (state.isAdmin) bindInfeasibleRelaxations(container, body);
     return;
   }
   if (!current.assignments.length) {
@@ -293,6 +301,7 @@ function paintSchedule(container, initialPosition = null) {
     ${regionControlsHTML()}
     <div id="schedule-view"></div>
     <p class="caption">파란 글자는 반영된 듀티 신청, 회색은 주말·공휴일입니다.${scheduleEditMode ? " 우클릭한 셀은 재생성 시에도 고정됩니다." : ""}</p>
+    ${draftConstraintBlock()}
     ${checklistBlock()}
     ${violationsBlock()}
   `;
@@ -338,6 +347,109 @@ function paintSchedule(container, initialPosition = null) {
   renderView();
 }
 
+/** 생성 실패 시 원인 카테고리(off_cap/n_then_2off/듀티 신청)별로 이번 한 번만 적용할 완화 UI. */
+function infeasibleRelaxationsHTML() {
+  if (!state.isAdmin) return "";
+  const raw = current.infeasible_raw_categories ?? [];
+  const sections = [];
+
+  if (raw.includes("off_cap")) {
+    const names = current.nurse_names ?? [];
+    sections.push(`
+      <div class="panel" id="relax-off-cap-panel">
+        <h3>오프 개수 완화</h3>
+        <p class="caption">선택한 인원만 이번 생성에서 목표보다 적은 오프(더 근무)를 허용합니다. 초과는 여전히 금지됩니다.</p>
+        <div class="check-list">
+          ${names.map((name) => `<label class="inline-check"><input type="checkbox" data-relax-off-cap value="${escapeHtml(name)}" /> ${escapeHtml(name)}</label>`).join("")}
+        </div>
+        <button type="button" class="primary inline-primary" id="relax-off-cap-btn" disabled>선택한 인원만 완화하고 다시 생성</button>
+      </div>
+    `);
+  }
+
+  if (raw.includes("n_then_2off")) {
+    sections.push(`
+      <div class="panel" id="relax-n-rest-panel">
+        <h3>나이트 후 휴식 완화</h3>
+        <label class="inline-check"><input type="checkbox" id="relax-n-rest-checkbox" /> 나이트 후 1일만 휴식 허용(이번 생성만)</label>
+        <button type="button" class="primary inline-primary" id="relax-n-rest-btn" disabled>이 설정으로 다시 생성</button>
+      </div>
+    `);
+  }
+
+  const dutyRequests = current.infeasible_duty_requests ?? [];
+  if (dutyRequests.length) {
+    sections.push(`
+      <div class="panel" id="relax-duty-requests-panel">
+        <h3>충돌하는 희망 듀티 신청</h3>
+        <p class="caption">아래 신청이 생성을 막고 있습니다. 미반영 처리하면 그 신청을 뺀 채로 다시 생성합니다.</p>
+        <ul class="plain-list">
+          ${dutyRequests.map((req) => `
+            <li>
+              ${escapeHtml(req.nurse_name)} · ${escapeHtml(req.date)} · ${escapeHtml(req.requested_shift)}(${req.kind === "avoid" ? "제외" : "희망"})
+              <button type="button" data-ignore-duty-request="${escapeHtml(req.id)}">이 신청 미반영하고 다시 생성</button>
+            </li>
+          `).join("")}
+        </ul>
+      </div>
+    `);
+  }
+
+  return sections.join("");
+}
+
+function bindInfeasibleRelaxations(container, body) {
+  const offCapButton = body.querySelector("#relax-off-cap-btn");
+  if (offCapButton) {
+    const checkboxes = () => [...body.querySelectorAll("[data-relax-off-cap]")];
+    for (const checkbox of checkboxes()) {
+      checkbox.addEventListener("change", () => {
+        offCapButton.disabled = !checkboxes().some((item) => item.checked);
+      });
+    }
+    onClickBusy(offCapButton, async () => {
+      const status = container.querySelector("#schedule-status");
+      const names = checkboxes().filter((item) => item.checked).map((item) => item.value);
+      try {
+        current = await api.generateScheduleWithRelaxations({ relax_off_cap_for: names });
+        paint(container);
+      } catch (err) {
+        status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+      }
+    }, "다시 생성 중...");
+  }
+
+  const nRestButton = body.querySelector("#relax-n-rest-btn");
+  if (nRestButton) {
+    const checkbox = body.querySelector("#relax-n-rest-checkbox");
+    checkbox.addEventListener("change", () => {
+      nRestButton.disabled = !checkbox.checked;
+    });
+    onClickBusy(nRestButton, async () => {
+      const status = container.querySelector("#schedule-status");
+      try {
+        current = await api.generateScheduleWithRelaxations({ relax_n_then_1off: true });
+        paint(container);
+      } catch (err) {
+        status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+      }
+    }, "다시 생성 중...");
+  }
+
+  for (const button of body.querySelectorAll("[data-ignore-duty-request]")) {
+    onClickBusy(button, async () => {
+      const status = container.querySelector("#schedule-status");
+      try {
+        await api.updateRequest(button.dataset.ignoreDutyRequest, { decision: "ignore" });
+        current = await api.generateSchedule();
+        paint(container);
+      } catch (err) {
+        status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+      }
+    }, "처리 중...");
+  }
+}
+
 function bindScheduleEditControls(container, body) {
   const startButton = body.querySelector("#schedule-edit-start-btn");
   if (startButton) {
@@ -347,6 +459,8 @@ function bindScheduleEditControls(container, body) {
       clearRegionState();
       scheduleEditMode = true;
       editDraft = { edits: new Map() };
+      draftValidation = null;
+      draftValidationRequest += 1;
       paint(container);
     });
   }
@@ -361,6 +475,8 @@ function bindScheduleEditControls(container, body) {
         });
         scheduleEditMode = false;
         editDraft = null;
+        draftValidation = null;
+        draftValidationRequest += 1;
         editingCell = null;
         paint(container);
       } catch (err) {
@@ -374,6 +490,8 @@ function bindScheduleEditControls(container, body) {
       if (editDraft?.edits.size && !confirm("저장하지 않은 변경사항을 취소할까요?")) return;
       scheduleEditMode = false;
       editDraft = null;
+      draftValidation = null;
+      draftValidationRequest += 1;
       editingCell = null;
       paint(container);
     });
@@ -651,6 +769,29 @@ function draftShiftFor(name, date) {
   return editDraft?.edits.get(`${name}|${date}`)?.shift;
 }
 
+function refreshDraftValidation(container) {
+  if (!editDraft?.edits.size) {
+    draftValidation = null;
+    paint(container);
+    return;
+  }
+  const requestId = ++draftValidationRequest;
+  draftValidation = { loading: true };
+  paint(container);
+  api.validateScheduleDraft({
+    expected_revision: current.revision ?? current.schedule_revision,
+    edits: [...editDraft.edits.values()],
+  }).then((result) => {
+    if (requestId !== draftValidationRequest || !scheduleEditMode) return;
+    draftValidation = result;
+    paint(container);
+  }).catch((err) => {
+    if (requestId !== draftValidationRequest || !scheduleEditMode) return;
+    draftValidation = { error: err.message };
+    paint(container);
+  });
+}
+
 function bindScheduleAssignmentEditing(body, view, renderView, ctx) {
   if (!state.isAdmin || !scheduleEditMode || viewMode !== "grid" || current.feasible !== true) return;
 
@@ -686,7 +827,7 @@ function bindScheduleAssignmentEditing(body, view, renderView, ctx) {
       const pinned = isManualOverride(nurse_name, date);
       editDraft.edits.set(key, { nurse_name, date, shift, pinned });
       editingCell = null;
-      paint(body.closest("main") ?? body.parentElement);
+      refreshDraftValidation(body.closest("main") ?? body.parentElement);
     });
   }
 }
@@ -749,7 +890,10 @@ function gridViewHTML({ dates, holidays, highlights, charges, byNurse, names, he
 
   // 하단 날짜별 인원 집계 (간호사 배정 기준).
   const tally = (shift) =>
-    dates.map((date) => names.reduce((n, name) => n + (byNurse.get(name)?.get(date) === shift ? 1 : 0), 0));
+    dates.map((date) => names.reduce(
+      (n, name) => n + ((draftShiftFor(name, date) ?? byNurse.get(name)?.get(date)) === shift ? 1 : 0),
+      0,
+    ));
   const tallyRows = TALLY_ROWS.map(
     (shift) => `
       <tr class="tally-row">
@@ -951,13 +1095,31 @@ function summaryBlock() {
   `;
 }
 
+function draftConstraintBlock() {
+  if (!state.isAdmin || !scheduleEditMode || !editDraft?.edits.size) return "";
+  if (draftValidation?.loading) {
+    return `<p class="caption">저장 전 제약조건을 계산 중입니다.</p>`;
+  }
+  if (draftValidation?.error) {
+    return `<div class="error-banner">저장 전 제약조건을 확인하지 못했습니다: ${escapeHtml(draftValidation.error)}</div>`;
+  }
+  if (!draftValidation) return "";
+  if (draftValidation.validation_ok) {
+    return `<p class="caption">저장 전 편집 초안이 현재 제약조건을 모두 충족합니다.</p>`;
+  }
+  return `<div class="error-banner">저장 전 편집 초안에 제약 위반 ${draftValidation.violations.length}건이 있습니다. 아래에서 확인하세요.</div>`;
+}
+
 function metric(value, label) {
   return `<div><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`;
 }
 
 function checklistBlock() {
-  if (!state.isAdmin || !current.checklist.length) return "";
-  const unmet = current.checklist.filter((item) => !item.ok).length;
+  const checklist = scheduleEditMode && draftValidation?.loading
+    ? []
+    : (scheduleEditMode ? draftValidation?.checklist : null) ?? current.checklist;
+  if (!state.isAdmin || !checklist.length) return "";
+  const unmet = checklist.filter((item) => !item.ok).length;
   const notice = unmet
     ? `<div class="error-banner">미반영 항목 ${unmet}건 — 아래 표에서 ❌ 항목을 확인하세요.</div>`
     : `<p class="caption">입력한 모든 제약 조건이 반영되었습니다.</p>`;
@@ -970,7 +1132,7 @@ function checklistBlock() {
           <tr><th>항목</th><th>대상</th><th>기준(입력)</th><th>실제</th><th>반영</th></tr>
         </thead>
         <tbody>
-          ${current.checklist
+          ${checklist
             .map(
               (row) => `
                 <tr>
@@ -990,11 +1152,14 @@ function checklistBlock() {
 }
 
 function violationsBlock() {
-  if (!state.isAdmin || !current.violations.length) return "";
+  const violations = scheduleEditMode && draftValidation?.loading
+    ? []
+    : (scheduleEditMode ? draftValidation?.violations : null) ?? current.violations;
+  if (!state.isAdmin || !violations.length) return "";
   return `
     <section class="panel">
       <h3>검증 오류</h3>
-      <ul class="plain-list">${current.violations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      <ul class="plain-list">${violations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
     </section>
   `;
 }

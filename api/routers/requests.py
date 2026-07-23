@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,7 +14,7 @@ from api.schemas import (
     RequestLockIn,
 )
 from api.state_store import load_ward_state, save_ward_state
-from core.models import DutyRequest, ShiftType, month_dates
+from core.models import DutyRequest, ShiftType, duty_request_id, month_dates
 
 router = APIRouter(prefix="/api/requests", tags=["requests"])
 
@@ -25,8 +24,7 @@ VALID_DECISIONS = {"force", "ignore"}
 
 
 def _request_id(req: DutyRequest) -> str:
-    key = f"{req.nurse_name}|{req.day.isoformat()}|{req.kind}|{req.requested_shift.value}"
-    return hashlib.sha1(key.encode()).hexdigest()[:20]
+    return duty_request_id(req)
 
 
 def _names(ss: dict) -> list[str]:

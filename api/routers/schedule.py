@@ -9,6 +9,8 @@ from api.deps import CurrentUser, get_current_user, require_admin
 from api.schemas import (
     AssistantRowOut,
     ChecklistItemOut,
+    DutyRequestOut,
+    GenerateRelaxationsIn,
     NurseStatsOut,
     PrevMonthIn,
     PrevMonthOut,
@@ -16,6 +18,7 @@ from api.schemas import (
     RegenerateApplyIn,
     RegeneratePreviewIn,
     ScheduleAssignmentOut,
+    ScheduleDraftValidationOut,
     ScheduleEditBatchIn,
     ScheduleOut,
     ScheduleRequestOut,
@@ -34,6 +37,7 @@ from core.models import (
     ShiftRequirement,
     ShiftType,
     build_month_requirements,
+    duty_request_id,
     lookback_dates,
     month_dates,
     month_key,
@@ -149,9 +153,31 @@ def _infeasibility_messages(ss: dict, categories: list[str]) -> list[str]:
     for category in categories:
         if category in labels:
             messages.append(labels[category])
+        elif category.startswith("duty_request:"):
+            messages.append("강제 반영으로 설정된 듀티 신청이 다른 규칙과 충돌합니다.")
         elif category.startswith("solver_status_"):
             messages.append("세부 충돌 원인을 계산하지 못했습니다. 위 인력 수와 수동 고정 듀티를 먼저 확인하세요.")
     return messages or ["현재 인력·요청·하드 제약의 조합으로는 근무표를 만들 수 없습니다."]
+
+
+def _resolve_infeasible_duty_requests(ss: dict, raw_categories: list[str]) -> list[DutyRequestOut]:
+    """진단이 지목한 duty_request:<id> 코드를 실제 신청 객체로 되짚는다."""
+    ids = {cat.split(":", 1)[1] for cat in raw_categories if cat.startswith("duty_request:")}
+    if not ids:
+        return []
+    return [
+        DutyRequestOut(
+            id=duty_request_id(req),
+            nurse_name=req.nurse_name,
+            date=req.day.isoformat(),
+            requested_shift=req.requested_shift.value,
+            kind=getattr(req, "kind", "prefer"),
+            decision=getattr(req, "decision", "force"),
+            memo=getattr(req, "memo", ""),
+        )
+        for req in ss.get("duty_requests", [])
+        if duty_request_id(req) in ids
+    ]
 
 
 def _charge_cells(ss: dict, result) -> list[str]:
@@ -270,6 +296,37 @@ def _off_target_shortfalls(
     return mismatches
 
 
+def _draft_assignments(
+    ss: dict,
+    assignments: dict[tuple[str, date], ShiftType],
+    edits,
+    year: int,
+    month: int,
+) -> dict[tuple[str, date], ShiftType]:
+    """저장하지 않은 편집을 적용한 뒤, O 초과분의 연차 전환까지 미리 계산한다."""
+    candidate = dict(assignments)
+    for edit in edits:
+        key = (edit.nurse_name, date.fromisoformat(edit.date))
+        try:
+            shift = ShiftType(edit.shift)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "지원하지 않는 근무 코드입니다.") from exc
+        candidate[key] = shift
+        if shift != ShiftType.O:
+            continue
+        nurse = next((n for n in ss.get("nurses", []) if n.name == edit.nurse_name), None)
+        if nurse is None or nurse.is_helper or nurse.is_night_dedicated:
+            continue
+        target = _off_target(ss, year, month).get(nurse.name, 0)
+        o_count = sum(
+            candidate.get((nurse.name, day)) == ShiftType.O
+            for day in month_dates(year, month)
+        )
+        if o_count > target:
+            candidate[key] = ShiftType.AL
+    return candidate
+
+
 def _validate_selected_cells(ss: dict, cells, year: int, month: int) -> set[tuple[str, date]]:
     nurses = {nurse.name for nurse in ss.get("nurses", []) if not nurse.is_helper}
     selected: set[tuple[str, date]] = set()
@@ -380,7 +437,13 @@ def _schedule_out(ss: dict, user: CurrentUser) -> ScheduleOut:
         revision=_revision(ss),
         feasible=result.feasible,
         objective_value=result.objective_value,
-        infeasible_categories=list(result.infeasible_categories),
+        infeasible_categories=(
+            [] if result.feasible else _infeasibility_messages(ss, result.infeasible_categories)
+        ),
+        infeasible_raw_categories=[] if result.feasible else list(result.infeasible_categories),
+        infeasible_duty_requests=(
+            [] if result.feasible else _resolve_infeasible_duty_requests(ss, result.infeasible_categories)
+        ),
         assignments=assignments,
         nurse_names=[nurse.name for nurse in ss.get("nurses", [])],
         honored_requests=[_request_out(req) for req in result.honored_duty_requests],
@@ -421,9 +484,13 @@ def get_schedule(user: CurrentUser = Depends(get_current_user)) -> ScheduleOut:
     return _schedule_out(load_ward_state(user.ward_id), user)
 
 
-@router.post("/generate", response_model=ScheduleOut)
-def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
-    ss = load_ward_state(user.ward_id)
+def _run_generate(
+    ss: dict,
+    user: CurrentUser,
+    *,
+    relaxed_off_cap_nurses: frozenset[str] = frozenset(),
+    n_rest_days: int = 2,
+) -> ScheduleOut:
     nurses = ss.get("nurses", [])
     if not nurses:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "간호사 명단을 먼저 입력하세요.")
@@ -446,9 +513,11 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
         time_limit_seconds=60.0,
         settings=_solver_settings(ss, user),
         fixed_assignments=_manual_assignments(ss, year, month),
+        relaxed_off_cap_nurses=relaxed_off_cap_nurses,
+        n_rest_days=n_rest_days,
     )
-    if not result.feasible:
-        result.infeasible_categories = _infeasibility_messages(ss, result.infeasible_categories)
+    # infeasible_categories는 원본 코드 그대로 저장한다 — 사람이 읽는 문구·완화 버튼용 원본
+    # 코드 모두 _schedule_out에서 매번 다시 계산한다(체크리스트·통계와 같은 방식).
     ss["schedule_result"] = result
     ss["result_published"] = False
     ss.setdefault("schedule_signatures", {})[month_key(year, month)] = staffing_signature(
@@ -457,6 +526,26 @@ def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
     _bump_revision(ss)
     save_ward_state(user.ward_id, ss)
     return _schedule_out(ss, user)
+
+
+@router.post("/generate", response_model=ScheduleOut)
+def generate(user: CurrentUser = Depends(require_admin)) -> ScheduleOut:
+    ss = load_ward_state(user.ward_id)
+    return _run_generate(ss, user)
+
+
+@router.post("/generate-with-relaxations", response_model=ScheduleOut)
+def generate_with_relaxations(
+    body: GenerateRelaxationsIn, user: CurrentUser = Depends(require_admin)
+) -> ScheduleOut:
+    """생성이 막혔을 때 관리자가 고른 완화를 이번 한 번만 적용해 다시 생성한다."""
+    ss = load_ward_state(user.ward_id)
+    return _run_generate(
+        ss,
+        user,
+        relaxed_off_cap_nurses=frozenset(body.relax_off_cap_for),
+        n_rest_days=1 if body.relax_n_then_1off else 2,
+    )
 
 
 @router.patch("/assignments", response_model=ScheduleOut)
@@ -530,6 +619,36 @@ def update_assignments(
     _bump_revision(ss)
     save_ward_state(user.ward_id, ss)
     return _schedule_out(ss, user)
+
+
+@router.post("/validate-draft", response_model=ScheduleDraftValidationOut)
+def validate_draft(
+    body: ScheduleEditBatchIn, user: CurrentUser = Depends(require_admin)
+) -> ScheduleDraftValidationOut:
+    """저장 전 편집 초안의 제약 충족 여부를 상태 변경 없이 반환한다."""
+    ss = load_ward_state(user.ward_id)
+    result = ss.get("schedule_result")
+    if result is None or not result.feasible:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "먼저 실행 가능한 근무표를 생성하세요.")
+    if body.expected_revision != _revision(ss):
+        raise HTTPException(status.HTTP_409_CONFLICT, "근무표가 변경되었습니다. 새로고침 후 다시 시도하세요.")
+    year, month = int(ss["year"]), int(ss["month"])
+    _validate_selected_cells(ss, body.edits, year, month)
+    candidate = _draft_assignments(ss, result.assignments, body.edits, year, month)
+    report = validate_schedule(
+        ss.get("nurses", []),
+        year,
+        month,
+        candidate,
+        _requirements(ss, year, month),
+        _off_target(ss, year, month),
+        settings=_solver_settings(ss, user),
+    )
+    return ScheduleDraftValidationOut(
+        validation_ok=report.ok,
+        violations=list(report.violations),
+        checklist=_checklist_out(report, ss, result),
+    )
 
 
 @router.post("/regenerate-preview")

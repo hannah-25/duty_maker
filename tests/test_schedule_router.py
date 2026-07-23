@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -14,7 +15,7 @@ from api.routers.schedule import (
     _validate_selected_cells,
 )
 from api.schemas import ScheduleCellEditIn, ScheduleCellIn, ScheduleEditBatchIn, ScheduleOut, WardSettings
-from core.models import DutyRequest, Nurse, ScheduleResult, ShiftType
+from core.models import DutyRequest, Nurse, ScheduleResult, ShiftRequirement, ShiftType
 from core.constraints import merge_ward_settings
 
 
@@ -257,6 +258,39 @@ def test_manual_assignment_rejects_off_shortfall(monkeypatch):
     assert state["manual_overrides"] == {}
 
 
+def test_draft_validation_does_not_persist_edits(monkeypatch):
+    day = date(2026, 7, 1)
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 3, "manual_overrides": {},
+        "schedule_previews": {}, "nurses": [Nurse("Kim")], "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=True, assignments={("Kim", day): ShiftType.D}),
+    }
+    captured = {}
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_: {"Kim": 0})
+    monkeypatch.setattr(schedule_router, "_requirements", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_solver_settings", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_checklist_out", lambda *_: [])
+    monkeypatch.setattr(
+        schedule_router,
+        "validate_schedule",
+        lambda _nurses, _year, _month, assignments, *_, **__: captured.update(assignments=dict(assignments)) or SimpleNamespace(ok=True, violations=[]),
+    )
+
+    response = schedule_router.validate_draft(
+        ScheduleEditBatchIn(
+            expected_revision=3,
+            edits=[ScheduleCellEditIn(nurse_name="Kim", date=day.isoformat(), shift="N", pinned=False)],
+        ),
+        CurrentUser("ward", "admin", True),
+    )
+
+    assert captured["assignments"][("Kim", day)] is ShiftType.N
+    assert state["schedule_result"].assignments[("Kim", day)] is ShiftType.D
+    assert state["manual_overrides"] == {}
+    assert response.validation_ok is True
+
+
 def test_trinity_pair_preference_is_limited_to_trinity_a(monkeypatch):
     monkeypatch.setattr(schedule_router, "resolve_ward_settings", lambda _: {"weekday_charge_D": 2})
 
@@ -359,3 +393,40 @@ def test_generate_passes_prev_month_history_to_solver(monkeypatch):
     schedule_router.generate(CurrentUser("ward", "admin", True))
 
     assert captured["history"] == {("우창희", date(2026, 7, 31)): ShiftType.N}
+
+
+def test_generate_reports_conflicting_forced_duty_request(monkeypatch):
+    """강제 반영 듀티 신청이 다른 하드 규칙과 충돌하면, 원본 진단 코드와 해당 신청이 함께 나와야 한다."""
+    year, month = 2026, 8
+    day = date(year, month, 3)
+    days_in_month = 31
+    zero_template = (ShiftRequirement(0, 0, 0), ShiftRequirement(0, 0, 0), ShiftRequirement(0, 0, 0))
+    state = {
+        "year": year, "month": month, "schedule_revision": 0,
+        "manual_overrides": {}, "schedule_previews": {},
+        "nurses": [Nurse("Kim", can_charge=True)],
+        # 그 날만 하드 D 요건(1명)과 정면 충돌하는 강제 오프 신청 — 나머지 날은 전부 무근무.
+        "duty_requests": [DutyRequest("Kim", day, ShiftType.O, decision="force")],
+        "weekday_template": zero_template, "weekend_template": zero_template,
+        "date_override_rows": [{"date": day.isoformat(), "D": 1, "E": 0, "N": 0}],
+        "selected_holidays": set(),
+        "constraint_settings": {
+            "weekday_charge_D": 0, "weekday_charge_E": 0, "weekday_charge_N": 0,
+            "weekend_charge_D": 0, "weekend_charge_E": 0, "weekend_charge_N": 0,
+        },
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    # 그 하루만 일하고 나머지는 전부 오프 — off_cap·연속근무 등 다른 하드 규칙과는
+    # 애초에 충돌하지 않도록, 실제로 그렇게 됐을 때의 목표치를 그대로 준다.
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_a: {"Kim": days_in_month - 1})
+
+    out = schedule_router.generate(CurrentUser("ward", "admin", True))
+
+    assert out.feasible is False
+    conflicting = [c for c in out.infeasible_raw_categories if c.startswith("duty_request:")]
+    assert conflicting, out.infeasible_raw_categories
+    assert any(
+        req.nurse_name == "Kim" and req.date == day.isoformat() and req.requested_shift == "O"
+        for req in out.infeasible_duty_requests
+    ), out.infeasible_duty_requests

@@ -630,3 +630,87 @@ def test_infeasible_when_all_nurses_night_unavailable():
     assert not result.feasible
     assert "allowed_shifts" in result.infeasible_categories
     assert "staffing_range" in result.infeasible_categories
+
+
+def test_night_dedicated_nurse_can_take_annual_leave():
+    """나이트 전담자도 연차(AL)를 쓸 수 있다 — 예전엔 하드로 AL==0을 강제했었다."""
+    nurse = Nurse(
+        name="야간", level=NurseLevel.SENIOR_CHARGE, allowed_shifts={ShiftType.N}, max_n_hard=2
+    )
+    assert nurse.is_night_dedicated
+    days = [date(2026, 1, d) for d in range(1, 6)]  # 5일: N 2개 + 나머지 3일
+    requirements = {
+        day: DayRequirement(day, ShiftRequirement(0, 0, 0), ShiftRequirement(0, 0, 0), ShiftRequirement(0, 1, 0))
+        for day in days
+    }
+    settings = {f"{prefix}_charge_{s}": 0 for prefix in ("weekday", "weekend") for s in ("D", "E", "N")}
+    sm = ScheduleModel([nurse], days, [], {}, requirements, {nurse.name: 0}, settings=settings)
+    sm.add_tier1_hard_constraints()
+    # 3일차를 연차로 강제 — 예전 규칙(AL==0)이었다면 INFEASIBLE.
+    sm.model.Add(sm.val(nurse.name, days[2], ShiftType.AL) == 1)
+
+    solver = cp_model.CpSolver()
+    assert solver.Solve(sm.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    assert solver.Value(sm.val(nurse.name, days[2], ShiftType.AL)) == 1
+    # 나이트 개수는 여전히 상한만큼 정확히 고정된다.
+    assert sum(solver.Value(sm.val(nurse.name, d, ShiftType.N)) for d in days) == nurse.max_n_hard
+
+
+# --------------------------------------------------------- 완화(1회성) 옵션 --
+def test_off_cap_relaxation_allows_shortfall_for_selected_nurse_only():
+    """관리자가 이번 생성만 완화하기로 고른 사람은 목표보다 적은 오프(더 근무)를 허용한다."""
+    nurse = Nurse(name="A", can_charge=True)
+    days = [date(2026, 1, d) for d in range(1, 5)]
+    off_target = {"A": 1}
+
+    strict = ScheduleModel([nurse], days, [], {}, {}, off_target)
+    strict._rule_off_cap()
+    for day in days:
+        strict.model.Add(strict.val("A", day, ShiftType.D) == 1)  # 매일 근무 -> 오프 0일
+    assert cp_model.CpSolver().Solve(strict.model) == cp_model.INFEASIBLE
+
+    relaxed = ScheduleModel(
+        [nurse], days, [], {}, {}, off_target, relaxed_off_cap_nurses=frozenset({"A"}),
+    )
+    relaxed._rule_off_cap()
+    for day in days:
+        relaxed.model.Add(relaxed.val("A", day, ShiftType.D) == 1)
+    solver = cp_model.CpSolver()
+    assert solver.Solve(relaxed.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    o_count = sum(solver.Value(relaxed.val("A", day, ShiftType.O)) for day in days)
+    assert o_count == 0 < off_target["A"]
+
+
+def test_off_cap_relaxation_still_forbids_exceeding_target():
+    """완화는 "목표보다 적게"만 허용한다 — 초과는 대상자여도 여전히 금지."""
+    nurse = Nurse(name="A", can_charge=True)
+    days = [date(2026, 1, d) for d in range(1, 5)]
+    off_target = {"A": 1}
+
+    sm = ScheduleModel(
+        [nurse], days, [], {}, {}, off_target, relaxed_off_cap_nurses=frozenset({"A"}),
+    )
+    sm._rule_off_cap()
+    for day in days:
+        sm.model.Add(sm.val("A", day, ShiftType.O) == 1)  # 매일 오프 -> 목표(1) 초과
+
+    assert cp_model.CpSolver().Solve(sm.model) == cp_model.INFEASIBLE
+
+
+def test_n_rest_days_relaxation_allows_single_day_rest_after_night_block():
+    """이번 생성만 나이트 후 1일 휴식으로 완화하면, 기본(2일)에선 불가능했던 배치도 통과한다."""
+    nurse = Nurse(name="A", can_charge=True)
+    days = [date(2026, 1, d) for d in range(1, 5)]
+    forced = [ShiftType.N, ShiftType.N, ShiftType.O, ShiftType.D]
+
+    strict = ScheduleModel([nurse], days, [], {}, {}, {"A": 0})
+    strict._rule_n_then_2off()
+    for day, shift in zip(days, forced):
+        strict.model.Add(strict.val("A", day, shift) == 1)
+    assert cp_model.CpSolver().Solve(strict.model) == cp_model.INFEASIBLE
+
+    relaxed = ScheduleModel([nurse], days, [], {}, {}, {"A": 0}, n_rest_days=1)
+    relaxed._rule_n_then_2off()
+    for day, shift in zip(days, forced):
+        relaxed.model.Add(relaxed.val("A", day, shift) == 1)
+    assert cp_model.CpSolver().Solve(relaxed.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)

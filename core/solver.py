@@ -31,12 +31,17 @@ def generate_schedule(
     settings: dict | None = None,
     fixed_assignments: Optional[dict[tuple[str, date], ShiftType]] = None,
     require_change_from: Optional[dict[tuple[str, date], ShiftType]] = None,
+    relaxed_off_cap_nurses: frozenset[str] | None = None,
+    n_rest_days: int = 2,
 ) -> ScheduleResult:
     """한 달치 근무표를 생성한다.
 
     history: (간호사이름, 날짜) -> ShiftType. 이전 달 마지막 5일 이력 (없으면 O로 간주).
     off_target: 간호사이름 -> 이번달 목표 오프일수 (주말 + 병동 공휴일 수).
     settings: 병동별 제약 설정 (DEFAULT_WARD_SETTINGS 참고).
+    relaxed_off_cap_nurses / n_rest_days: 생성이 infeasible일 때 관리자가 이번 한 번만
+        고른 완화 옵션 (기본값 = 기존 하드 제약 그대로). 진단·워밍스타트 모델에는 적용하지
+        않는다 — 완화가 부족했을 때도 다음 진단이 전체 하드 규칙 기준으로 정확해야 한다.
 
     월 나이트 개수는 명단의 개인 N상한(max_n_hard)으로만 제한된다(하한 없음).
     하루 근무 인원은 인원기준 상한(staffing_range)으로 제한된다.
@@ -58,6 +63,8 @@ def generate_schedule(
     sm = ScheduleModel(
         nurses, current_days, lb_days, history, requirements, off_target,
         use_assumptions=False, settings=merged_settings,
+        relaxed_off_cap_nurses=relaxed_off_cap_nurses or frozenset(),
+        n_rest_days=n_rest_days,
     )
     sm.add_tier1_hard_constraints()
     sm.add_fixed_assignments(fixed_assignments or {}, require_change_from=require_change_from)
@@ -98,6 +105,8 @@ def generate_schedule(
         diag_sm.add_fixed_assignments(
             fixed_assignments or {}, require_change_from=require_change_from
         )
+        # 강제(force) 듀티 신청도 하드 제약이라, 그게 원인일 수 있다는 걸 진단에 포함한다.
+        diag_sm.add_duty_requests(active_duty_requests)
         diag_sm.apply_assumptions()
         diag_solver = cp_model.CpSolver()
         diag_solver.parameters.max_time_in_seconds = min(time_limit_seconds, 30.0)

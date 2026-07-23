@@ -96,6 +96,7 @@ export const api = {
   getPrevMonth: () => request("/schedule/prev-month"),
   putPrevMonth: (body) => request("/schedule/prev-month", { method: "PUT", body }),
   generateSchedule: () => request("/schedule/generate", { method: "POST" }),
+  generateScheduleWithRelaxations: (body) => request("/schedule/generate-with-relaxations", { method: "POST", body }),
   previewScheduleRegeneration: (body) => request("/schedule/regenerate-preview", { method: "POST", body }),
   applyScheduleRegeneration: (previewId) => request("/schedule/regenerate-apply", {
     method: "POST",
@@ -105,6 +106,7 @@ export const api = {
     method: "DELETE",
   }),
   updateScheduleAssignments: (body) => request("/schedule/assignments", { method: "PATCH", body }),
+  validateScheduleDraft: (body) => request("/schedule/validate-draft", { method: "POST", body }),
   publishSchedule: (body) => request("/schedule/publish", { method: "PUT", body }),
   downloadHwpx: () => download("/exports/hwpx"),
   downloadXlsx: () => download("/exports/xlsx"),

@@ -246,6 +246,13 @@ class ScheduleEditBatchIn(BaseModel):
     edits: list[ScheduleCellEditIn] = Field(min_length=1)
 
 
+class GenerateRelaxationsIn(BaseModel):
+    """생성이 infeasible일 때, 관리자가 이번 한 번만 고른 하드 제약 완화."""
+
+    relax_off_cap_for: list[str] = Field(default_factory=list)
+    relax_n_then_1off: bool = False
+
+
 class ScheduleRequestOut(BaseModel):
     nurse_name: str
     date: str
@@ -290,6 +297,10 @@ class ScheduleOut(BaseModel):
     feasible: bool | None = None
     objective_value: float | None = None
     infeasible_categories: list[str] = Field(default_factory=list)
+    # infeasible_categories와 짝을 이루는 원본 코드(예: "off_cap", "duty_request:<id>") —
+    # 프론트가 어떤 완화 버튼을 보여줄지 판단하는 데 쓴다.
+    infeasible_raw_categories: list[str] = Field(default_factory=list)
+    infeasible_duty_requests: list[DutyRequestOut] = Field(default_factory=list)
     assignments: list[ScheduleAssignmentOut] = Field(default_factory=list)
     nurse_names: list[str] = Field(default_factory=list)
     honored_requests: list[ScheduleRequestOut] = Field(default_factory=list)
@@ -310,6 +321,12 @@ class ScheduleOut(BaseModel):
     dropped_off_count: int = 0
     s_eligible_names: list[str] = Field(default_factory=list)
     manual_override_cells: list[str] = Field(default_factory=list)
+
+
+class ScheduleDraftValidationOut(BaseModel):
+    validation_ok: bool
+    violations: list[str] = Field(default_factory=list)
+    checklist: list[ChecklistItemOut] = Field(default_factory=list)
 
 
 class WardSettings(BaseModel):

@@ -11,6 +11,7 @@ from core.models import (
     Nurse,
     NurseLevel,
     ShiftType,
+    duty_request_id,
 )
 
 # 근무 배정 변수 카테고리. 연차(AL)도 모델 변수로 직접 다룬다:
@@ -78,6 +79,8 @@ class ScheduleModel:
         off_target: dict[str, int],
         use_assumptions: bool = False,
         settings: dict | None = None,
+        relaxed_off_cap_nurses: frozenset[str] = frozenset(),
+        n_rest_days: int = 2,
     ):
         self.model = cp_model.CpModel()
         self.nurses = nurses
@@ -89,6 +92,11 @@ class ScheduleModel:
         self.requirements = requirements
         self.off_target = off_target
         self.settings = merge_ward_settings(settings)
+        # 생성 1회에 한정된 완화 옵션 (기본값 = 기존 하드 제약 그대로).
+        # core/constraints.py의 하드 규칙 자체를 바꾸는 게 아니라, 관리자가 그때그때
+        # 명시적으로 고른 예외만 반영한다 — AGENTS.md "솔버 하드 제약" 항목 참고.
+        self.relaxed_off_cap_nurses = relaxed_off_cap_nurses
+        self.n_rest_days = n_rest_days
         # use_assumptions=False(기본): 모든 Tier1을 무조건 하드로 적용, presolve가 완전히
         # 동작해 훨씬 빠르고 좋은 해를 찾음 (일반적인 생성 경로).
         # use_assumptions=True: 각 규칙을 assumption 리터럴로 감싸 Infeasible 원인 진단이
@@ -99,6 +107,7 @@ class ScheduleModel:
         self.shift_vars: dict[tuple[str, date], dict[ShiftType, cp_model.IntVar]] = {}
         self.penalties: list[tuple[str, int, object]] = []  # (category, weight, var/expr)
         self.assumptions: dict[str, cp_model.IntVar] = {}
+        self.duty_request_by_assumption: dict[str, DutyRequest] = {}
         self._lookback_set = set(lookback_days)
 
         self._build_variables()
@@ -260,7 +269,7 @@ class ScheduleModel:
                     conds.append(cur)
                 if not isinstance(nxt, int):
                     conds.append(nxt.Not())
-                for offset in (1, 2):
+                for offset in range(1, self.n_rest_days + 1):
                     target = day + timedelta(days=offset)
                     if (nurse.name, target) not in self.shift_vars:
                         continue
@@ -368,9 +377,9 @@ class ScheduleModel:
                 )
 
     def _rule_night_dedicated(self):
-        """나이트 전담(N만 가능한 본원 간호사): 월 N 개수를 개인 상한(max_n_hard)만큼 고정하고,
-        나머지 날은 전부 오프(O). 연차는 쓰지 않는다.
-        (예: N상한 16 & 31일 -> N 16개 + O 15개.)
+        """나이트 전담(N만 가능한 본원 간호사): 월 N 개수를 개인 상한(max_n_hard)만큼 고정한다.
+        나머지 날은 오프(O) 또는 연차(AL) — 나이트 전담자도 연차를 쓸 수 있다.
+        (예: N상한 16 & 31일 -> N 16개 + (O/연차) 15개.)
         """
         lit = self._assumption("night_dedicated")
         for nurse in self.nurses:
@@ -378,8 +387,6 @@ class ScheduleModel:
                 continue
             total_n = sum(self.val(nurse.name, d, ShiftType.N) for d in self.current_days)
             self._enforce(self.model.Add(total_n == nurse.max_n_hard), lit)
-            for day in self.current_days:
-                self._enforce(self.model.Add(self.val(nurse.name, day, ShiftType.AL) == 0), lit)
 
     def _rule_staffing_range(self):
         """일별 인원 하드 범위: 하한 ≤ 인원 ≤ 상한.
@@ -499,7 +506,12 @@ class ScheduleModel:
             o_count = sum(self.val(nurse.name, d, ShiftType.O) for d in self.current_days)
             # The monthly OFF target is a Tier 1 hard constraint.  Annual leave
             # is separate rest time and must never be used in place of an OFF.
-            self._enforce(self.model.Add(o_count == target), lit)
+            if nurse.name in self.relaxed_off_cap_nurses:
+                # 관리자가 이번 생성 한 번만 완화하기로 고른 사람 — 목표보다 적게(더 일해서
+                # 인원 부족을 메우는 방향)는 허용하되, 초과는 여전히 금지한다.
+                self._enforce(self.model.Add(o_count <= target), lit)
+            else:
+                self._enforce(self.model.Add(o_count == target), lit)
 
     def apply_assumptions(self):
         """(진단 모드 전용) 모든 Tier1 카테고리를 True로 가정 (Infeasible 원인 진단용)."""
@@ -847,10 +859,13 @@ class ScheduleModel:
             else:
                 satisfied = self.val(req.nurse_name, req.day, req.requested_shift)
             if getattr(req, "decision", "force") == "force":
+                category = f"duty_request:{duty_request_id(req)}"
+                lit = self._assumption(category)
+                self.duty_request_by_assumption[category] = req
                 if getattr(req, "kind", "prefer") == "avoid":
-                    self.model.Add(satisfied == 0)
+                    self._enforce(self.model.Add(satisfied == 0), lit)
                 else:
-                    self.model.Add(satisfied == 1)
+                    self._enforce(self.model.Add(satisfied == 1), lit)
                 continue
             violation = self.model.NewBoolVar(
                 f"duty_request_violation_{req.nurse_name}_{req.day.isoformat()}"
