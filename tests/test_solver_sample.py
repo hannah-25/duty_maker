@@ -85,6 +85,52 @@ def test_off_target_is_hard_minimum_even_with_annual_leave_target():
     assert cp_model.CpSolver().Solve(sm.model) == cp_model.INFEASIBLE
 
 
+def test_exact_off_allows_staffing_target_shortfall_within_hard_range():
+    nurses = [Nurse(name=name, can_charge=True) for name in ("A", "B", "C")]
+    days = [date(2026, 1, day) for day in range(5, 8)]
+    requirements = {
+        day: DayRequirement(
+            day,
+            ShiftRequirement(minimum=1, maximum=2, target=2),
+            ShiftRequirement(minimum=1, maximum=1, target=1),
+            ShiftRequirement(minimum=0, maximum=0, target=0),
+        )
+        for day in days
+    }
+    sm = ScheduleModel(
+        nurses,
+        days,
+        [],
+        {},
+        requirements,
+        {nurse.name: 1 for nurse in nurses},
+        settings={
+            "weekday_charge_D": 1,
+            "weekday_charge_E": 1,
+            "weekday_charge_N": 0,
+            "weekend_charge_D": 1,
+            "weekend_charge_E": 1,
+            "weekend_charge_N": 0,
+        },
+    )
+    sm.add_tier1_hard_constraints()
+    sm.add_tier2_soft_constraints()
+    sm.model.Minimize(sum(sm.objective_terms()))
+    solver = cp_model.CpSolver()
+
+    assert solver.Solve(sm.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    for nurse in nurses:
+        assert sum(solver.Value(sm.val(nurse.name, day, ShiftType.O)) for day in days) == 1
+    assert any(
+        sum(
+            solver.Value(sm.val(nurse.name, day, ShiftType.D))
+            + solver.Value(sm.val(nurse.name, day, ShiftType.S))
+            for nurse in nurses
+        ) < requirements[day].D.target
+        for day in days
+    )
+
+
 def _night_off_return_penalty_for(sequence):
     nurse = Nurse(name="a", can_charge=True)
     days = [date(2026, 1, i) for i in range(1, len(sequence) + 1)]
@@ -175,8 +221,8 @@ def test_daily_n_meets_minimum(solved):
         assert n_count >= requirements[day].N.minimum, f"{day}: N {n_count}명 < 하한"
 
 
-def test_daily_staffing_meets_required_target_exactly(solved):
-    """Configured staffing targets are hard constraints, not preferences."""
+def test_daily_staffing_meets_hard_minimums(solved):
+    """Configured staffing minimums are hard constraints; targets are preferences."""
     nurses, requirements, _, result = solved
     assert result.feasible
 
@@ -184,7 +230,9 @@ def test_daily_staffing_meets_required_target_exactly(solved):
         d = sum(result.assignments[(nurse.name, day)] in (ShiftType.D, ShiftType.S) for nurse in nurses)
         e = sum(result.assignments[(nurse.name, day)] is ShiftType.E for nurse in nurses)
         n = sum(result.assignments[(nurse.name, day)] is ShiftType.N for nurse in nurses)
-        assert (d, e, n) == (req.D.target, req.E.target, req.N.target), f"{day}: {(d, e, n)}"
+        assert d >= req.D.minimum, f"{day}: D+S={d}"
+        assert e >= req.E.minimum, f"{day}: E={e}"
+        assert n >= req.N.minimum, f"{day}: N={n}"
 
 
 def test_daily_staffing_within_range(solved):
