@@ -275,10 +275,17 @@ function paintSchedule(container, initialPosition = null) {
     return;
   }
   if (current.feasible === false) {
+    const reasons = (current.infeasible_categories ?? []).filter((line) => line.trim());
+    const fixCards = state.isAdmin ? `${manualOverridePanelHTML()}${infeasibleRelaxationsHTML()}` : "";
     body.innerHTML = `
-      <div class="error-banner">실행 가능한 근무표를 찾지 못했습니다.</div>
-      <pre class="plain-list">${escapeHtml(current.infeasible_categories.join("\n"))}</pre>
-      ${infeasibleRelaxationsHTML()}
+      <section class="gen-failure">
+        <header class="gen-failure__head">
+          <strong>이번 조건으로는 근무표를 만들 수 없어요</strong>
+          <p>${state.isAdmin ? "아래 원인을 확인하고, 조치 카드에서 하나를 골라 다시 생성해 보세요." : "관리자가 조건을 조정한 뒤 다시 생성해야 합니다."}</p>
+        </header>
+        ${reasons.length ? `<ul class="gen-failure__reasons">${reasons.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : ""}
+        ${fixCards ? `<div class="fix-cards">${fixCards}</div>` : ""}
+      </section>
     `;
     if (state.isAdmin) bindInfeasibleRelaxations(container, body);
     return;
@@ -347,6 +354,37 @@ function paintSchedule(container, initialPosition = null) {
   renderView();
 }
 
+/** 생성 실패 화면 전용 — 현재 걸린 수동 고정(📌)을 풀 수 있는 탈출구.
+ *  불가능한 고정 때문에 생성이 실패하면 편집 모드에 못 들어가 고정을 못 푸는 교착을 해소한다. */
+function manualOverridePanelHTML() {
+  if (!state.isAdmin) return "";
+  const cells = current.manual_override_cells ?? [];
+  if (!cells.length) return "";
+  const likelyCause = (current.infeasible_raw_categories ?? []).includes("fixed_assignments");
+  const desc = likelyCause
+    ? "아래 수동 고정이 실패 원인일 수 있습니다. 일부를 풀고 다시 생성해 보세요."
+    : "수동으로 고정한 셀 목록입니다. 고정을 풀고 다시 생성할 수 있습니다.";
+  const rows = cells.map((key) => {
+    const idx = key.lastIndexOf("|");
+    const name = key.slice(0, idx);
+    const date = key.slice(idx + 1);
+    return `
+      <li class="fix-row">
+        <span class="fix-row__label"><span class="fix-row__pin">📌</span>${escapeHtml(name)} · ${escapeHtml(date)}</span>
+        <button type="button" data-clear-override="${escapeHtml(key)}">고정 풀고 다시 생성</button>
+      </li>`;
+  }).join("");
+  return `
+    <article class="fix-card ${likelyCause ? "is-likely-cause" : ""}" id="manual-override-panel">
+      <div class="fix-card__title">수동 고정 관리${likelyCause ? '<span class="fix-card__badge">원인 가능성</span>' : ""}</div>
+      <p class="fix-card__desc">${desc}</p>
+      <ul class="fix-card__rows">${rows}</ul>
+      <div class="fix-card__foot">
+        <button type="button" class="inline-primary btn-rose" id="clear-all-overrides-btn">모든 고정 풀고 다시 생성</button>
+      </div>
+    </article>`;
+}
+
 /** 생성 실패 시 원인 카테고리(off_cap/n_then_2off/듀티 신청)별로 이번 한 번만 적용할 완화 UI. */
 function infeasibleRelaxationsHTML() {
   if (!state.isAdmin) return "";
@@ -356,42 +394,46 @@ function infeasibleRelaxationsHTML() {
   if (raw.includes("off_cap")) {
     const names = current.nurse_names ?? [];
     sections.push(`
-      <div class="panel" id="relax-off-cap-panel">
-        <h3>오프 개수 완화</h3>
-        <p class="caption">선택한 인원만 이번 생성에서 목표보다 적은 오프(더 근무)를 허용합니다. 초과는 여전히 금지됩니다.</p>
+      <article class="fix-card" id="relax-off-cap-panel">
+        <div class="fix-card__title">오프 개수 완화</div>
+        <p class="fix-card__desc">선택한 인원만 이번 생성에서 목표보다 적은 오프(더 근무)를 허용합니다. 초과는 여전히 금지됩니다.</p>
         <div class="check-list">
           ${names.map((name) => `<label class="inline-check"><input type="checkbox" data-relax-off-cap value="${escapeHtml(name)}" /> ${escapeHtml(name)}</label>`).join("")}
         </div>
-        <button type="button" class="primary inline-primary" id="relax-off-cap-btn" disabled>선택한 인원만 완화하고 다시 생성</button>
-      </div>
+        <div class="fix-card__foot">
+          <button type="button" class="primary inline-primary" id="relax-off-cap-btn" disabled>선택한 인원만 완화하고 다시 생성</button>
+        </div>
+      </article>
     `);
   }
 
   if (raw.includes("n_then_2off")) {
     sections.push(`
-      <div class="panel" id="relax-n-rest-panel">
-        <h3>나이트 후 휴식 완화</h3>
+      <article class="fix-card" id="relax-n-rest-panel">
+        <div class="fix-card__title">나이트 후 휴식 완화</div>
         <label class="inline-check"><input type="checkbox" id="relax-n-rest-checkbox" /> 나이트 후 1일만 휴식 허용(이번 생성만)</label>
-        <button type="button" class="primary inline-primary" id="relax-n-rest-btn" disabled>이 설정으로 다시 생성</button>
-      </div>
+        <div class="fix-card__foot">
+          <button type="button" class="primary inline-primary" id="relax-n-rest-btn" disabled>이 설정으로 다시 생성</button>
+        </div>
+      </article>
     `);
   }
 
   const dutyRequests = current.infeasible_duty_requests ?? [];
   if (dutyRequests.length) {
     sections.push(`
-      <div class="panel" id="relax-duty-requests-panel">
-        <h3>충돌하는 희망 듀티 신청</h3>
-        <p class="caption">아래 신청이 생성을 막고 있습니다. 미반영 처리하면 그 신청을 뺀 채로 다시 생성합니다.</p>
-        <ul class="plain-list">
+      <article class="fix-card" id="relax-duty-requests-panel">
+        <div class="fix-card__title">충돌하는 희망 듀티 신청</div>
+        <p class="fix-card__desc">아래 신청이 생성을 막고 있습니다. 미반영 처리하면 그 신청을 뺀 채로 다시 생성합니다.</p>
+        <ul class="fix-card__rows">
           ${dutyRequests.map((req) => `
-            <li>
-              ${escapeHtml(req.nurse_name)} · ${escapeHtml(req.date)} · ${escapeHtml(req.requested_shift)}(${req.kind === "avoid" ? "제외" : "희망"})
-              <button type="button" data-ignore-duty-request="${escapeHtml(req.id)}">이 신청 미반영하고 다시 생성</button>
+            <li class="fix-row">
+              <span class="fix-row__label">${escapeHtml(req.nurse_name)} · ${escapeHtml(req.date)} · ${escapeHtml(req.requested_shift)}(${req.kind === "avoid" ? "제외" : "희망"})</span>
+              <button type="button" data-ignore-duty-request="${escapeHtml(req.id)}">미반영하고 다시 생성</button>
             </li>
           `).join("")}
         </ul>
-      </div>
+      </article>
     `);
   }
 
@@ -399,6 +441,28 @@ function infeasibleRelaxationsHTML() {
 }
 
 function bindInfeasibleRelaxations(container, body) {
+  // 수동 고정 풀기 — 고정을 제거한 뒤 곧바로 다시 생성한다.
+  const clearAndRegenerate = async (cells) => {
+    const status = container.querySelector("#schedule-status");
+    try {
+      await api.clearManualOverrides({
+        expected_revision: current.revision ?? current.schedule_revision,
+        cells,
+      });
+      current = await api.generateSchedule();
+      paint(container);
+    } catch (err) {
+      status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+    }
+  };
+  for (const button of body.querySelectorAll("[data-clear-override]")) {
+    onClickBusy(button, () => clearAndRegenerate([button.dataset.clearOverride]), "처리 중...");
+  }
+  const clearAllButton = body.querySelector("#clear-all-overrides-btn");
+  if (clearAllButton) {
+    onClickBusy(clearAllButton, () => clearAndRegenerate([]), "처리 중...");
+  }
+
   const offCapButton = body.querySelector("#relax-off-cap-btn");
   if (offCapButton) {
     const checkboxes = () => [...body.querySelectorAll("[data-relax-off-cap]")];

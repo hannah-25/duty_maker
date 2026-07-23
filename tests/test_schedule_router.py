@@ -14,7 +14,7 @@ from api.routers.schedule import (
     _solver_settings,
     _validate_selected_cells,
 )
-from api.schemas import ScheduleCellEditIn, ScheduleCellIn, ScheduleEditBatchIn, ScheduleOut, WardSettings
+from api.schemas import ClearOverridesIn, ScheduleCellEditIn, ScheduleCellIn, ScheduleEditBatchIn, ScheduleOut, WardSettings
 from core.models import DutyRequest, Nurse, ScheduleResult, ShiftRequirement, ShiftType
 from core.constraints import merge_ward_settings
 
@@ -256,6 +256,75 @@ def test_manual_assignment_rejects_off_shortfall(monkeypatch):
 
     assert state["schedule_result"].assignments[("Kim", days[0])] is ShiftType.O
     assert state["manual_overrides"] == {}
+
+
+def test_clear_manual_overrides_works_when_infeasible(monkeypatch):
+    """생성 실패(infeasible) 상태에서도 고정을 풀 수 있어야 교착에서 탈출한다."""
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 5,
+        "manual_overrides": {"Kim|2026-07-01": "연차", "Lee|2026-07-02": "N"},
+        "schedule_previews": {"stale": {}}, "nurses": [Nurse("Kim"), Nurse("Lee")],
+        "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=False, infeasible_categories=["fixed_assignments"]),
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(
+        schedule_router, "_schedule_out",
+        lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
+    )
+
+    # 실행 가능한 근무표가 없어도(=update_assignments는 400) 이 경로는 동작해야 한다.
+    result = schedule_router.clear_manual_overrides(
+        ClearOverridesIn(expected_revision=5, cells=["Kim|2026-07-01"]),
+        CurrentUser("ward", "admin", True),
+    )
+
+    assert state["manual_overrides"] == {"Lee|2026-07-02": "N"}
+    assert state["schedule_result"].feasible is False  # 결과는 그대로 둔다
+    assert state["schedule_previews"] == {}
+    assert result.revision == 6
+
+
+def test_clear_manual_overrides_empty_cells_clears_all(monkeypatch):
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 1,
+        "manual_overrides": {"Kim|2026-07-01": "연차", "Lee|2026-07-02": "N"},
+        "schedule_previews": {}, "nurses": [], "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=False),
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(
+        schedule_router, "_schedule_out",
+        lambda ss, user: ScheduleOut(year=2026, month=7, published=False, visible=True, revision=ss["schedule_revision"]),
+    )
+
+    schedule_router.clear_manual_overrides(
+        ClearOverridesIn(expected_revision=1, cells=[]),
+        CurrentUser("ward", "admin", True),
+    )
+
+    assert state["manual_overrides"] == {}
+
+
+def test_clear_manual_overrides_rejects_stale_revision(monkeypatch):
+    state = {
+        "year": 2026, "month": 7, "schedule_revision": 4,
+        "manual_overrides": {"Kim|2026-07-01": "연차"},
+        "schedule_previews": {}, "nurses": [], "duty_requests": [],
+        "schedule_result": ScheduleResult(feasible=False),
+    }
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+
+    with pytest.raises(HTTPException, match="근무표가 변경되었습니다"):
+        schedule_router.clear_manual_overrides(
+            ClearOverridesIn(expected_revision=3, cells=["Kim|2026-07-01"]),
+            CurrentUser("ward", "admin", True),
+        )
+
+    assert state["manual_overrides"] == {"Kim|2026-07-01": "연차"}
 
 
 def test_draft_validation_does_not_persist_edits(monkeypatch):

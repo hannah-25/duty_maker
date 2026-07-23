@@ -9,6 +9,7 @@ from api.deps import CurrentUser, get_current_user, require_admin
 from api.schemas import (
     AssistantRowOut,
     ChecklistItemOut,
+    ClearOverridesIn,
     DutyRequestOut,
     GenerateRelaxationsIn,
     NurseStatsOut,
@@ -616,6 +617,30 @@ def update_assignments(
         result.assignments, active_requests
     )
     ss["result_published"] = False
+    _bump_revision(ss)
+    save_ward_state(user.ward_id, ss)
+    return _schedule_out(ss, user)
+
+
+@router.post("/manual-overrides/clear", response_model=ScheduleOut)
+def clear_manual_overrides(
+    body: ClearOverridesIn, user: CurrentUser = Depends(require_admin)
+) -> ScheduleOut:
+    """수동 고정(📌)을 해제한다. update_assignments와 달리 실행 가능한 근무표를 전제하지
+    않으므로, 불가능한 고정 때문에 생성이 실패해 편집 모드에 못 들어가는 교착에서 탈출할 수 있다.
+
+    schedule_result는 건드리지 않는다(실패 상태 그대로). 고정을 푼 뒤 다시 생성하면 재계산된다.
+    """
+    ss = load_ward_state(user.ward_id)
+    if body.expected_revision != _revision(ss):
+        raise HTTPException(status.HTTP_409_CONFLICT, "근무표가 변경되었습니다. 새로고침 후 다시 시도하세요.")
+    overrides = dict(ss.get("manual_overrides") or {})
+    if body.cells:
+        for key in body.cells:
+            overrides.pop(key, None)
+    else:
+        overrides = {}
+    ss["manual_overrides"] = overrides
     _bump_revision(ss)
     save_ward_state(user.ward_id, ss)
     return _schedule_out(ss, user)

@@ -106,6 +106,7 @@ export const api = {
     method: "DELETE",
   }),
   updateScheduleAssignments: (body) => request("/schedule/assignments", { method: "PATCH", body }),
+  clearManualOverrides: (body) => request("/schedule/manual-overrides/clear", { method: "POST", body }),
   validateScheduleDraft: (body) => request("/schedule/validate-draft", { method: "POST", body }),
   publishSchedule: (body) => request("/schedule/publish", { method: "PUT", body }),
   downloadHwpx: () => download("/exports/hwpx"),

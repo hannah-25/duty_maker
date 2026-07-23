@@ -253,6 +253,13 @@ class GenerateRelaxationsIn(BaseModel):
     relax_n_then_1off: bool = False
 
 
+class ClearOverridesIn(BaseModel):
+    """수동 고정(📌) 해제. cells가 비면 전체 해제, 값이 있으면 그 키만 해제."""
+
+    expected_revision: int = Field(ge=0)
+    cells: list[str] = Field(default_factory=list)
+
+
 class ScheduleRequestOut(BaseModel):
     nurse_name: str
     date: str
