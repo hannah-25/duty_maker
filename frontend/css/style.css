@@ -596,6 +596,39 @@ h3 {
   margin: 0.4rem 0 0.8rem;
 }
 
+.constraint-guide {
+  margin-top: 1.5rem;
+}
+
+.constraint-guide summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.constraint-guide summary::-webkit-details-marker { display: none; }
+.constraint-guide summary::after {
+  content: "⌄";
+  color: var(--brand-600);
+  font-size: 1.2rem;
+  font-weight: 700;
+  transition: transform 0.15s ease;
+}
+.constraint-guide[open] summary::after { transform: rotate(180deg); }
+.constraint-guide summary strong,
+.constraint-guide summary small { display: block; }
+.constraint-guide summary strong { font-size: 1rem; }
+.constraint-guide summary small { margin-top: 0.15rem; color: var(--ink-muted); font-size: 0.82rem; font-weight: 500; }
+.constraint-guide-content { padding-top: 0.9rem; }
+.constraint-guide-content > p { margin: 0 0 0.8rem; color: var(--ink-muted); font-size: 0.88rem; line-height: 1.5; }
+.constraint-guide-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+.constraint-guide-grid section { padding: 0.75rem; border-radius: var(--radius-sm); background: var(--surface-soft); }
+.constraint-guide-grid h3 { margin: 0 0 0.55rem; font-size: 0.9rem; }
+.constraint-guide-grid ul { margin: 0; padding-left: 1.15rem; color: var(--ink-muted); font-size: 0.84rem; line-height: 1.55; }
+
 .compact-table {
   width: 100%;
   border-collapse: collapse;
@@ -1707,6 +1740,10 @@ kbd {
 
   .action-row .inline-primary {
     width: 100%;
+  }
+
+  .constraint-guide-grid {
+    grid-template-columns: 1fr;
   }
 
   /* Admin and member request calendars share the same touch target rhythm. */

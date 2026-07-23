@@ -55,6 +55,45 @@ function paint(container) {
       <button class="primary inline-primary" id="save-requirements-btn">저장</button>
       <span id="requirements-status" class="caption status-message"></span>
     </div>
+
+    <details class="constraint-guide panel">
+      <summary>
+        <span>
+          <strong>제약조건 안내</strong>
+          <small>하드는 반드시, 소프트는 가능한 한 지킵니다.</small>
+        </span>
+      </summary>
+      <div class="constraint-guide-content">
+        <p>하드 제약을 하나라도 만족할 수 없으면 근무표 생성이 실패합니다. 소프트 제약은 벌점이 낮아지도록 조정하며, 하드 제약을 대신할 수 없습니다.</p>
+        <div class="constraint-guide-grid">
+          <section>
+            <h3>하드 제약 · 반드시 지킴</h3>
+            <ul>
+              <li>하루 D/E/N/S/O/연차 중 하나만 배정</li>
+              <li>일별 D·E·N 인원 하한·상한과 근무별 차지 최소 인원 충족</li>
+              <li>나이트 종료 뒤 2일 휴식, 연속 근무 최대 5일, 연속 나이트 최대 3일</li>
+              <li>이브닝 다음 날 D·S 배정 금지</li>
+              <li>개인별 가능 듀티·나이트 월 상한·오프/연차 목표 준수</li>
+              <li>S는 사용 설정 시에만, 저연차·신규 저연차에게만 배정</li>
+              <li>평일 전담자의 주말 휴식, 헬퍼·나이트 전담의 별도 근무 규칙 적용</li>
+              <li>강제반영 신청과 부분 재생성에서 고정한 배정 준수</li>
+            </ul>
+          </section>
+          <section>
+            <h3>소프트 제약 · 가능한 한 지킴</h3>
+            <ul>
+              <li>목표 인원 충족(월요일 우선), 단독 나이트와 휴식 뒤 재나이트 회피</li>
+              <li>하루 S 1명 이하 및 S 사용 최소화</li>
+              <li>시니어 이브닝·신규 저연차 동시 근무 쏠림 완화</li>
+              <li>5일 연속 근무, 4일 연속 휴식, 휴식 사이 단독 근무 회피</li>
+              <li>통주말 휴식 월 1회 이상(가능하면 2회) 확보</li>
+              <li>제외 희망 근무, 연차 과다 사용·편중 최소화</li>
+              <li>일반 희망·제외 신청은 높은 우선순위의 소프트 제약</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </details>
   `;
 
   paintHolidays(container);

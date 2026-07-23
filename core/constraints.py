@@ -287,29 +287,6 @@ class ScheduleModel:
                     self._enforce(self.model.Add(d_next == 0), e_val, lit)
                     self._enforce(self.model.Add(s_next == 0), e_val, lit)
 
-    def _rule_e_rest_d_forbidden(self):
-        """E → 휴식 1일 → D/S 금지 (하루만 쉬고 데이 출근 불가. 이틀 이상 쉬면 허용).
-
-        선형화: E[d] + 휴식[d+1] + D[d+2] ≤ 2 (셋 다 참이면 위반).
-        휴식은 O/연차 모두 포함. 값이 과거 상수여도 동일 부등식이 성립한다.
-        """
-        lit = self._assumption("e_rest_d")
-        for nurse in self.nurses:
-            for day in self.all_days:
-                e_val = self.val(nurse.name, day, ShiftType.E)
-                if isinstance(e_val, int) and e_val == 0:
-                    continue
-                day2 = day + timedelta(days=2)
-                if (nurse.name, day2) not in self.shift_vars:
-                    continue
-                rest_mid = self.rest_val(nurse.name, day + timedelta(days=1))
-                if isinstance(rest_mid, int) and rest_mid == 0:
-                    continue
-                d_next2 = self.val(nurse.name, day2, ShiftType.D)
-                s_next2 = self.val(nurse.name, day2, ShiftType.S)
-                self._enforce(self.model.Add(e_val + rest_mid + d_next2 <= 2), lit)
-                self._enforce(self.model.Add(e_val + rest_mid + s_next2 <= 2), lit)
-
     def _rule_max_consecutive_workdays(self, window: int = 6):
         lit = self._assumption("max_consecutive_workdays")
         for nurse in self.nurses:

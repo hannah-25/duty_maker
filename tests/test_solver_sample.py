@@ -85,6 +85,42 @@ def test_off_target_is_hard_minimum_even_with_annual_leave_target():
     assert cp_model.CpSolver().Solve(sm.model) == cp_model.INFEASIBLE
 
 
+def test_evening_off_day_pattern_is_allowed():
+    """E → O → D is no longer a hard constraint."""
+    nurse = Nurse(name="A", can_charge=True)
+    days = [date(2026, 1, day) for day in range(5, 8)]
+    requirements = {
+        day: DayRequirement(
+            day,
+            ShiftRequirement(minimum=0, maximum=1),
+            ShiftRequirement(minimum=0, maximum=1),
+            ShiftRequirement(minimum=0, maximum=0),
+        )
+        for day in days
+    }
+    sm = ScheduleModel(
+        [nurse],
+        days,
+        [],
+        {},
+        requirements,
+        {nurse.name: 1},
+        settings={
+            "weekday_charge_D": 0,
+            "weekday_charge_E": 0,
+            "weekday_charge_N": 0,
+            "weekend_charge_D": 0,
+            "weekend_charge_E": 0,
+            "weekend_charge_N": 0,
+        },
+    )
+    sm.add_tier1_hard_constraints()
+    for day, shift in zip(days, (ShiftType.E, ShiftType.O, ShiftType.D)):
+        sm.model.Add(sm.val(nurse.name, day, shift) == 1)
+
+    assert cp_model.CpSolver().Solve(sm.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+
 def test_exact_off_allows_staffing_target_shortfall_within_hard_range():
     nurses = [Nurse(name=name, can_charge=True) for name in ("A", "B", "C")]
     days = [date(2026, 1, day) for day in range(5, 8)]
