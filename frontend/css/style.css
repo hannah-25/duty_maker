@@ -1373,17 +1373,14 @@ kbd {
 }
 
 .relaxation-cell::after {
-  content: "완화";
+  content: "●";
   position: absolute;
-  right: 0.08rem;
-  top: 0.05rem;
-  padding: 0.02rem 0.16rem;
-  border-radius: 3px;
-  background: #fff0c7;
-  color: #854d00;
-  font-size: 0.58rem;
+  right: 0.12rem;
+  top: 0.08rem;
+  color: #c96d00;
+  font-size: 0.5rem;
   font-weight: 800;
-  line-height: 1.15;
+  line-height: 1;
 }
 
 .helper-tag {
