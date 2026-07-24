@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 from datetime import date
+from time import monotonic
 from typing import Optional
 
 from ortools.sat.python import cp_model
 
-from core.constraints import DEFAULT_WARD_SETTINGS, ScheduleModel
+from core.constraints import (
+    DEFAULT_WARD_SETTINGS,
+    RELAXATION_CATEGORIES,
+    RELAXATION_FOUR_CONSECUTIVE_N,
+    RELAXATION_N_AFTER_ONE_OFF,
+    RELAXATION_NOD,
+    RELAXATION_OFF_CAP,
+    RELAXATION_WEEKDAY_WEEKEND,
+    ScheduleModel,
+)
 from core.models import (
     DayRequirement,
     DutyRequest,
@@ -32,6 +42,10 @@ def generate_schedule(
     fixed_assignments: Optional[dict[tuple[str, date], ShiftType]] = None,
     require_change_from: Optional[dict[tuple[str, date], ShiftType]] = None,
     relaxed_off_cap_nurses: frozenset[str] | None = None,
+    relaxed_n_then_1off_nurses: frozenset[str] | None = None,
+    relaxed_nod_nurses: frozenset[str] | None = None,
+    relaxed_four_consecutive_n_nurses: frozenset[str] | None = None,
+    relaxed_weekday_weekend_nurses: frozenset[str] | None = None,
     n_rest_days: int = 2,
 ) -> ScheduleResult:
     """한 달치 근무표를 생성한다.
@@ -39,7 +53,7 @@ def generate_schedule(
     history: (간호사이름, 날짜) -> ShiftType. 이전 달 마지막 5일 이력 (없으면 O로 간주).
     off_target: 간호사이름 -> 이번달 목표 오프일수 (주말 + 병동 공휴일 수).
     settings: 병동별 제약 설정 (DEFAULT_WARD_SETTINGS 참고).
-    relaxed_off_cap_nurses / n_rest_days: 생성이 infeasible일 때 관리자가 이번 한 번만
+    relaxed_*_nurses / n_rest_days: 생성이 infeasible일 때 관리자가 이번 한 번만
         고른 완화 옵션 (기본값 = 기존 하드 제약 그대로). 진단·워밍스타트 모델에는 적용하지
         않는다 — 완화가 부족했을 때도 다음 진단이 전체 하드 규칙 기준으로 정확해야 한다.
 
@@ -64,6 +78,10 @@ def generate_schedule(
         nurses, current_days, lb_days, history, requirements, off_target,
         use_assumptions=False, settings=merged_settings,
         relaxed_off_cap_nurses=relaxed_off_cap_nurses or frozenset(),
+        relaxed_n_then_1off_nurses=relaxed_n_then_1off_nurses or frozenset(),
+        relaxed_nod_nurses=relaxed_nod_nurses or frozenset(),
+        relaxed_four_consecutive_n_nurses=relaxed_four_consecutive_n_nurses or frozenset(),
+        relaxed_weekday_weekend_nurses=relaxed_weekday_weekend_nurses or frozenset(),
         n_rest_days=n_rest_days,
     )
     sm.add_tier1_hard_constraints()
@@ -72,7 +90,6 @@ def generate_schedule(
     sm.add_duty_requests(active_duty_requests)
     sm.add_tier3_exceptions(exceptions)
 
-    sm.model.Minimize(sum(sm.objective_terms()))
     if not _apply_feasible_assignment_hint(
         sm,
         nurses,
@@ -89,10 +106,37 @@ def generate_schedule(
     ):
         _apply_n_cluster_hint(sm, nurses, current_days, requirements)
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit_seconds
-    solver.parameters.num_search_workers = 8
-    status = solver.Solve(sm.model)
+    # 일회성 완화는 "큰 가중치" 하나에 의존하지 않고, 각 단계를 잠근 뒤 다음
+    # 목표를 푼다. 오프 감소 → N-O-D → 그 밖의 완화 → 기존 품질 순서가 보장된다.
+    deadline = monotonic() + time_limit_seconds
+    stages = (
+        frozenset({RELAXATION_OFF_CAP}),
+        frozenset({RELAXATION_NOD}),
+        frozenset({
+            RELAXATION_N_AFTER_ONE_OFF,
+            RELAXATION_FOUR_CONSECUTIVE_N,
+            RELAXATION_WEEKDAY_WEEKEND,
+        }),
+    )
+    solver: cp_model.CpSolver | None = None
+    status: int | None = None
+    for categories in stages:
+        terms = sm.relaxation_terms(categories)
+        if not terms:
+            continue
+        expression = sum(terms)
+        solver, status = _solve_objective(sm, expression, deadline)
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            break
+        # OPTIMAL이면 해당 단계의 최솟값을, 시간 제한으로 FEASIBLE이면 현재까지
+        # 발견한 최선의 상한을 고정한다. 어느 경우에도 이후 단계가 앞선 완화를
+        # 더 많이 쓰지는 못한다.
+        sm.model.Add(expression <= solver.Value(expression))
+
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) or status is None:
+        solver, status = _solve_objective(
+            sm, sum(sm.objective_terms(include_relaxations=False)), deadline
+        )
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         # 2차: 정말 Infeasible인 경우에만, 원인 진단을 위해 assumption 모드로 재구성해서 재시도.
@@ -120,6 +164,7 @@ def generate_schedule(
 
     assignments = _extract_assignments(solver, sm, nurses, current_days)
     soft_violations = _summarize_soft_violations(solver, sm)
+    relaxation_actual_nurses, relaxation_cells = _extract_relaxation_events(solver, sm)
     honored_duty_requests, dropped_duty_requests = _split_duty_requests(
         assignments, active_duty_requests
     )
@@ -131,7 +176,32 @@ def generate_schedule(
         dropped_duty_requests=dropped_duty_requests,
         honored_duty_requests=honored_duty_requests,
         objective_value=solver.ObjectiveValue(),
+        relaxations={
+            "off_cap": sorted(relaxed_off_cap_nurses or ()),
+            "n_then_1off": sorted(relaxed_n_then_1off_nurses or ()),
+            "nod": sorted(relaxed_nod_nurses or ()),
+            "four_consecutive_n": sorted(relaxed_four_consecutive_n_nurses or ()),
+            "weekday_weekend": sorted(relaxed_weekday_weekend_nurses or ()),
+        },
+        relaxation_usage={
+            category: amount
+            for category, amount in soft_violations.items()
+            if category in RELAXATION_CATEGORIES and amount
+        },
+        relaxation_actual_nurses=relaxation_actual_nurses,
+        relaxation_cells=relaxation_cells,
     )
+
+
+def _solve_objective(
+    sm: ScheduleModel, expression, deadline: float
+) -> tuple[cp_model.CpSolver, int]:
+    """Solve the current model with one lexicographic objective stage."""
+    sm.model.Minimize(expression)
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = max(0.1, deadline - monotonic())
+    solver.parameters.num_search_workers = 8
+    return solver, solver.Solve(sm.model)
 
 
 def _build_n_cluster_hint(
@@ -294,3 +364,21 @@ def _summarize_soft_violations(solver, sm: ScheduleModel) -> dict[str, float]:
         value = var if isinstance(var, int) else solver.Value(var)
         summary[category] = summary.get(category, 0) + value
     return summary
+
+
+def _extract_relaxation_events(
+    solver, sm: ScheduleModel
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    nurses: dict[str, set[str]] = {}
+    cells: dict[str, set[str]] = {}
+    for category, nurse_name, day, var in sm.relaxation_events:
+        value = var if isinstance(var, int) else solver.Value(var)
+        if value <= 0:
+            continue
+        nurses.setdefault(category, set()).add(nurse_name)
+        if day is not None:
+            cells.setdefault(category, set()).add(f"{nurse_name}|{day.isoformat()}")
+    return (
+        {category: sorted(names) for category, names in nurses.items()},
+        {category: sorted(items) for category, items in cells.items()},
+    )

@@ -204,6 +204,13 @@ class ScheduleResult:
     dropped_duty_requests: list[DutyRequest] = field(default_factory=list)
     honored_duty_requests: list[DutyRequest] = field(default_factory=list)
     objective_value: Optional[float] = None
+    # 이번 생성에만 명시적으로 허용한 완화 대상과, 실제로 발생한 위반 횟수.
+    # 다음 일반 생성에는 전달되지 않으므로 영구 설정이 아니다.
+    relaxations: dict[str, list[str]] = field(default_factory=dict)
+    relaxation_usage: dict[str, float] = field(default_factory=dict)
+    # category -> 실제 완화가 발생한 구성원 / 현재월에 표시 가능한 셀("이름|날짜")
+    relaxation_actual_nurses: dict[str, list[str]] = field(default_factory=dict)
+    relaxation_cells: dict[str, list[str]] = field(default_factory=dict)
 
 
 def month_dates(year: int, month: int) -> list[date]:

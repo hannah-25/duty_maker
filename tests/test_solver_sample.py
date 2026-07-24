@@ -714,3 +714,54 @@ def test_n_rest_days_relaxation_allows_single_day_rest_after_night_block():
     for day, shift in zip(days, forced):
         relaxed.model.Add(relaxed.val("A", day, shift) == 1)
     assert cp_model.CpSolver().Solve(relaxed.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+
+def test_scoped_n_after_one_off_allows_only_e_or_n_not_d():
+    nurse = Nurse(name="A", can_charge=True)
+    days = [date(2026, 1, d) for d in range(1, 4)]
+
+    for second_shift in (ShiftType.E, ShiftType.N):
+        sm = ScheduleModel(
+            [nurse], days, [], {}, {}, {"A": 0},
+            relaxed_n_then_1off_nurses=frozenset({"A"}),
+        )
+        sm._rule_n_then_2off()
+        for day, shift in zip(days, (ShiftType.N, ShiftType.O, second_shift)):
+            sm.model.Add(sm.val("A", day, shift) == 1)
+        assert cp_model.CpSolver().Solve(sm.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+    strict_d = ScheduleModel(
+        [nurse], days, [], {}, {}, {"A": 0},
+        relaxed_n_then_1off_nurses=frozenset({"A"}),
+    )
+    strict_d._rule_n_then_2off()
+    for day, shift in zip(days, (ShiftType.N, ShiftType.O, ShiftType.D)):
+        strict_d.model.Add(strict_d.val("A", day, shift) == 1)
+    assert cp_model.CpSolver().Solve(strict_d.model) == cp_model.INFEASIBLE
+
+
+def test_nod_is_a_separate_scoped_relaxation():
+    nurse = Nurse(name="A", can_charge=True)
+    days = [date(2026, 1, d) for d in range(1, 4)]
+    sm = ScheduleModel(
+        [nurse], days, [], {}, {}, {"A": 0},
+        relaxed_nod_nurses=frozenset({"A"}),
+    )
+    sm._rule_n_then_2off()
+    for day, shift in zip(days, (ShiftType.N, ShiftType.O, ShiftType.D)):
+        sm.model.Add(sm.val("A", day, shift) == 1)
+    assert cp_model.CpSolver().Solve(sm.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+
+def test_off_cap_relaxation_distributes_shortfall_evenly_among_selected_nurses():
+    nurses = [Nurse(name="A", can_charge=True), Nurse(name="B", can_charge=True)]
+    days = [date(2026, 1, d) for d in range(1, 4)]
+    sm = ScheduleModel(
+        nurses, days, [], {}, {}, {"A": 3, "B": 3},
+        relaxed_off_cap_nurses=frozenset({"A", "B"}),
+    )
+    sm._rule_off_cap()
+    for day in days:
+        sm.model.Add(sm.val("A", day, ShiftType.D) == 1)  # A의 오프 감소 3일
+        sm.model.Add(sm.val("B", day, ShiftType.O) == 1)  # B의 오프 감소 0일
+    assert cp_model.CpSolver().Solve(sm.model) == cp_model.INFEASIBLE

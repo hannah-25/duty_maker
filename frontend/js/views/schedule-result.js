@@ -299,6 +299,7 @@ function paintSchedule(container, initialPosition = null) {
 
   body.innerHTML = `
     ${summaryBlock()}
+    ${relaxationSummaryBlock()}
     ${scopeToggleBlock()}
     <div class="view-toggle ${state.isAdmin ? "" : "member-view-toggle"}">
       <button data-view="grid" class="${viewMode === "grid" ? "active" : ""}" ${scheduleEditMode ? "disabled" : ""}>표 보기</button>
@@ -385,39 +386,103 @@ function manualOverridePanelHTML() {
     </article>`;
 }
 
-/** 생성 실패 시 원인 카테고리(off_cap/n_then_2off/듀티 신청)별로 이번 한 번만 적용할 완화 UI. */
+function relaxationConsentHTML({ key, title, description, names }) {
+  const memberChoices = names.map((name) => `
+    <label class="inline-check"><input type="checkbox" data-relax-member="${key}" value="${escapeHtml(name)}" disabled /> ${escapeHtml(name)}</label>
+  `).join("") || '<span class="relax-option__note">적용 가능한 구성원이 없습니다.</span>';
+  return `
+    <article class="relax-option" data-relax-option="${key}">
+      <label class="inline-check relax-option__consent">
+        <input type="checkbox" data-relax-consent="${key}" /> ${title} 허용(이번 생성만)
+      </label>
+      <p class="fix-card__desc">${description}</p>
+      <fieldset class="relax-option__scope" data-relax-scope="${key}" disabled>
+        <legend>적용 대상</legend>
+        <label class="inline-check"><input type="radio" name="relax-scope-${key}" value="all" checked /> 전체 적용</label>
+        <label class="inline-check"><input type="radio" name="relax-scope-${key}" value="selected" /> 구성원 선택</label>
+        <div class="check-list relax-option__members" data-relax-members="${key}" hidden>${memberChoices}</div>
+      </fieldset>
+    </article>
+  `;
+}
+
+function relaxationDiagnosisNote(isCause) {
+  return isCause
+    ? '<span class="fix-card__badge">진단 원인에 포함됨</span>'
+    : '<span class="relax-option__note">진단 원인에는 직접 포함되지 않음</span>';
+}
+
+function offCapRelaxationHTML(names, isCause) {
+  const content = `
+    <div class="relaxation-block__title">오프 감소 — 별도 관리 ${relaxationDiagnosisNote(isCause)}</div>
+    <p class="fix-card__desc">목표보다 적은 오프를 허용합니다. 선택한 사람 사이의 실제 감소량은 최대 1일만 차이 나도록 균등하게 배분합니다.</p>
+    <div class="relax-option-list">
+      ${relaxationConsentHTML({
+        key: "off_cap",
+        title: "오프 감소",
+        description: "가장 엄격하게 최소화합니다. 다른 일반 완화와 함께 선택할 수 있지만, 적용 대상은 이 항목에서만 별도로 정합니다.",
+        names,
+      })}
+    </div>`;
+  if (isCause) return `<section class="relaxation-block relaxation-block--off" id="off-cap-relaxation-panel">${content}</section>`;
+  return `
+    <details class="relaxation-block relaxation-block--off" id="off-cap-relaxation-panel">
+      <summary>오프 감소 — 별도 관리 ${relaxationDiagnosisNote(false)}</summary>
+      <div class="relaxation-block__content">${content}</div>
+    </details>`;
+}
+
+/** 생성 실패 시 원인별로 명시 동의한 일회성 완화를 함께 제출하는 UI. */
 function infeasibleRelaxationsHTML() {
   if (!state.isAdmin) return "";
   const raw = current.infeasible_raw_categories ?? [];
+  const names = current.nurse_names ?? [];
+  const weekdayOnlyNames = current.weekday_only_names ?? [];
+  const nightEligibleNames = current.night_eligible_names ?? [];
   const sections = [];
+  const normalOptions = [];
+  const offCapIsCause = raw.includes("off_cap");
 
-  if (raw.includes("off_cap")) {
-    const names = current.nurse_names ?? [];
-    sections.push(`
-      <article class="fix-card" id="relax-off-cap-panel">
-        <div class="fix-card__title">오프 개수 완화</div>
-        <p class="fix-card__desc">선택한 인원만 이번 생성에서 목표보다 적은 오프(더 근무)를 허용합니다. 초과는 여전히 금지됩니다.</p>
-        <div class="check-list">
-          ${names.map((name) => `<label class="inline-check"><input type="checkbox" data-relax-off-cap value="${escapeHtml(name)}" /> ${escapeHtml(name)}</label>`).join("")}
-        </div>
-        <div class="fix-card__foot">
-          <button type="button" class="primary inline-primary" id="relax-off-cap-btn" disabled>선택한 인원만 완화하고 다시 생성</button>
-        </div>
-      </article>
-    `);
-  }
+  normalOptions.push(relaxationConsentHTML({
+    key: "n_then_1off",
+    title: `N 후 1OFF ${relaxationDiagnosisNote(raw.includes("n_then_2off"))}`,
+    description: "선택한 구성원에게만 N-O-E와 N-O-N을 허용합니다. N-O-D는 아래 별도 항목의 동의가 필요합니다.",
+    names: nightEligibleNames,
+  }));
+  normalOptions.push(relaxationConsentHTML({
+    key: "nod",
+    title: `N-O-D ${relaxationDiagnosisNote(raw.includes("n_then_2off"))}`,
+    description: "선택한 구성원에게만 N-O-D를 허용합니다. 다른 소프트 제약보다 우선해 최소화합니다.",
+    names: nightEligibleNames,
+  }));
+  normalOptions.push(relaxationConsentHTML({
+    key: "four_consecutive_n",
+    title: `연속 나이트 4일 ${relaxationDiagnosisNote(raw.includes("max_consecutive_nights"))}`,
+    description: "선택한 구성원에게만 기존 최대 3일 대신 4일까지 허용합니다.",
+    names: nightEligibleNames,
+  }));
+  normalOptions.push(relaxationConsentHTML({
+    key: "weekday_weekend",
+    title: `평일 근무자 주말 근무 ${relaxationDiagnosisNote(raw.includes("weekday_only"))}`,
+    description: "선택한 평일 근무자에게만 주말 근무를 허용합니다.",
+    names: weekdayOnlyNames,
+  }));
 
-  if (raw.includes("n_then_2off")) {
-    sections.push(`
-      <article class="fix-card" id="relax-n-rest-panel">
-        <div class="fix-card__title">나이트 후 휴식 완화</div>
-        <label class="inline-check"><input type="checkbox" id="relax-n-rest-checkbox" /> 나이트 후 1일만 휴식 허용(이번 생성만)</label>
-        <div class="fix-card__foot">
-          <button type="button" class="primary inline-primary" id="relax-n-rest-btn" disabled>이 설정으로 다시 생성</button>
-        </div>
-      </article>
-    `);
-  }
+  if (offCapIsCause) sections.push(offCapRelaxationHTML(names, true));
+  sections.push(`
+    <section class="relaxation-block" id="general-relaxations-panel">
+      <div class="relaxation-block__title">일반 완화</div>
+      <p class="fix-card__desc">항목마다 동의하고 적용 대상을 정하세요. 실제 위반량은 기존 근무표 품질보다 먼저 최소화됩니다.</p>
+      <div class="relax-option-list">${normalOptions.join("")}</div>
+    </section>
+  `);
+  if (!offCapIsCause) sections.push(offCapRelaxationHTML(names, false));
+
+  sections.push(`
+    <div class="fix-card__foot relaxation-submit">
+      <button type="button" class="primary inline-primary" id="apply-relaxations-btn" disabled>선택한 완화로 다시 생성</button>
+    </div>
+  `);
 
   const dutyRequests = current.infeasible_duty_requests ?? [];
   if (dutyRequests.length) {
@@ -463,36 +528,60 @@ function bindInfeasibleRelaxations(container, body) {
     onClickBusy(clearAllButton, () => clearAndRegenerate([]), "처리 중...");
   }
 
-  const offCapButton = body.querySelector("#relax-off-cap-btn");
-  if (offCapButton) {
-    const checkboxes = () => [...body.querySelectorAll("[data-relax-off-cap]")];
-    for (const checkbox of checkboxes()) {
-      checkbox.addEventListener("change", () => {
-        offCapButton.disabled = !checkboxes().some((item) => item.checked);
-      });
-    }
-    onClickBusy(offCapButton, async () => {
-      const status = container.querySelector("#schedule-status");
-      const names = checkboxes().filter((item) => item.checked).map((item) => item.value);
-      try {
-        current = await api.generateScheduleWithRelaxations({ relax_off_cap_for: names });
-        paint(container);
-      } catch (err) {
-        status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+  const applyRelaxationsButton = body.querySelector("#apply-relaxations-btn");
+  if (applyRelaxationsButton) {
+    const optionKeys = [...body.querySelectorAll("[data-relax-option]")]
+      .map((option) => option.dataset.relaxOption);
+    const eligibleNames = (key) => {
+      if (key === "weekday_weekend") return current.weekday_only_names ?? [];
+      if (["n_then_1off", "nod", "four_consecutive_n"].includes(key)) {
+        return current.night_eligible_names ?? [];
       }
-    }, "다시 생성 중...");
-  }
-
-  const nRestButton = body.querySelector("#relax-n-rest-btn");
-  if (nRestButton) {
-    const checkbox = body.querySelector("#relax-n-rest-checkbox");
-    checkbox.addEventListener("change", () => {
-      nRestButton.disabled = !checkbox.checked;
-    });
-    onClickBusy(nRestButton, async () => {
+      return current.nurse_names ?? [];
+    };
+    const selectedNames = (key) => {
+      const consent = body.querySelector(`[data-relax-consent="${key}"]`);
+      if (!consent?.checked) return [];
+      const scope = body.querySelector(`input[name="relax-scope-${key}"]:checked`)?.value;
+      if (scope === "all") return [...eligibleNames(key)];
+      return [...body.querySelectorAll(`[data-relax-member="${key}"]:checked`)].map((item) => item.value);
+    };
+    const updateSubmitState = () => {
+      applyRelaxationsButton.disabled = !optionKeys.some((key) => selectedNames(key).length);
+    };
+    for (const key of optionKeys) {
+      const consent = body.querySelector(`[data-relax-consent="${key}"]`);
+      const fieldset = body.querySelector(`[data-relax-scope="${key}"]`);
+      const members = body.querySelector(`[data-relax-members="${key}"]`);
+      consent.addEventListener("change", () => {
+        fieldset.disabled = !consent.checked;
+        updateSubmitState();
+      });
+      for (const scope of body.querySelectorAll(`input[name="relax-scope-${key}"]`)) {
+        scope.addEventListener("change", () => {
+          const choosingMembers = scope.checked && scope.value === "selected";
+          if (choosingMembers) members.hidden = false;
+          if (scope.checked && scope.value === "all") members.hidden = true;
+          for (const member of body.querySelectorAll(`[data-relax-member="${key}"]`)) {
+            member.disabled = !consent.checked || !choosingMembers;
+          }
+          updateSubmitState();
+        });
+      }
+      for (const member of body.querySelectorAll(`[data-relax-member="${key}"]`)) {
+        member.addEventListener("change", updateSubmitState);
+      }
+    }
+    onClickBusy(applyRelaxationsButton, async () => {
       const status = container.querySelector("#schedule-status");
       try {
-        current = await api.generateScheduleWithRelaxations({ relax_n_then_1off: true });
+        current = await api.generateScheduleWithRelaxations({
+          relax_off_cap_for: selectedNames("off_cap"),
+          relax_n_then_1off_for: selectedNames("n_then_1off"),
+          relax_nod_for: selectedNames("nod"),
+          relax_four_consecutive_n_for: selectedNames("four_consecutive_n"),
+          relax_weekday_weekend_for: selectedNames("weekday_weekend"),
+        });
         paint(container);
       } catch (err) {
         status.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
@@ -927,6 +1016,13 @@ function buildContext() {
   const holidays = new Set(current.holidays);
   const highlights = highlightCells();
   const charges = new Set(current.charge_cells ?? []);
+  const relaxationCells = new Map();
+  for (const [category, cells] of Object.entries(current.relaxation_cells ?? {})) {
+    for (const cell of cells) {
+      if (!relaxationCells.has(cell)) relaxationCells.set(cell, []);
+      relaxationCells.get(cell).push(category);
+    }
+  }
 
   const byNurse = new Map();
   for (const item of current.assignments) {
@@ -935,16 +1031,16 @@ function buildContext() {
   }
   const names = current.nurse_names.length ? current.nurse_names : [...byNurse.keys()];
   const helpers = new Set(current.helper_names ?? []);
-  return { dates, holidays, highlights, charges, byNurse, names, helpers };
+  return { dates, holidays, highlights, charges, relaxationCells, byNurse, names, helpers };
 }
 
-function gridViewHTML({ dates, holidays, highlights, charges, byNurse, names, helpers }) {
+function gridViewHTML({ dates, holidays, highlights, charges, relaxationCells, byNurse, names, helpers }) {
   const candidate = previewAssignments();
   const nurseRows = names.map((name, rowIndex) =>
-    tableRow(name, dates, holidays, highlights, charges, helpers, (date) => draftShiftFor(name, date) ?? byNurse.get(name)?.get(date), true, rowIndex, candidate)
+    tableRow(name, dates, holidays, highlights, charges, relaxationCells, helpers, (date) => draftShiftFor(name, date) ?? byNurse.get(name)?.get(date), true, rowIndex, candidate)
   );
   const assistantRows = (scheduleScope === "mine" && !state.isAdmin ? [] : current.assistant_rows).map((row) =>
-    tableRow(row.name, dates, holidays, highlights, charges, helpers, (date) => row.marks[date], false)
+    tableRow(row.name, dates, holidays, highlights, charges, relaxationCells, helpers, (date) => row.marks[date], false)
   );
   // 보조 인력은 간호사와 시각적으로 구분되게 빈 행 2줄을 둔다.
   const colspan = 1 + dates.length + STAT_COLUMNS.length;
@@ -997,16 +1093,17 @@ function gridViewHTML({ dates, holidays, highlights, charges, byNurse, names, he
   `;
 }
 
-function calendarViewHTML({ dates, holidays, charges, byNurse, names, helpers }) {
-  if (!state.isAdmin) return monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names, helpers });
+function calendarViewHTML({ dates, holidays, charges, relaxationCells, byNurse, names, helpers }) {
+  if (!state.isAdmin) return monthlyScheduleCalendarHTML({ dates, holidays, charges, relaxationCells, byNurse, names, helpers });
   // 날짜 열 × 근무 그룹(day/eve/night/S) 행. 각 칸에 명단 순서로 이름 나열, 차지는 ★.
   const cellNames = (date, shift) =>
     names
       .filter((name) => byNurse.get(name)?.get(date) === shift)
       .map((name) => {
         const charged = charges.has(`${name}|${date}`);
+        const relaxed = relaxationCells.has(`${name}|${date}`);
         const tag = helpers.has(name) ? '<span class="helper-tag">헬퍼</span>' : "";
-        return `<div class="cal-name"><span class="cal-name-line ${charged ? "is-charge" : ""}"><span class="cal-name-text">${escapeHtml(name)}</span>${tag}</span></div>`;
+        return `<div class="cal-name"><span class="cal-name-line ${charged ? "is-charge" : ""} ${relaxed ? "is-relaxed" : ""}"><span class="cal-name-text">${escapeHtml(name)}</span>${tag}</span></div>`;
       })
       .join("");
 
@@ -1047,7 +1144,7 @@ function calendarViewHTML({ dates, holidays, charges, byNurse, names, helpers })
   `;
 }
 
-function monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names, helpers }) {
+function monthlyScheduleCalendarHTML({ dates, holidays, charges, relaxationCells, byNurse, names, helpers }) {
   const leading = new Date(`${dates[0]}T00:00:00`).getDay();
   const slots = [...Array(leading).fill(""), ...dates];
   while (slots.length % 7) slots.push("");
@@ -1057,7 +1154,8 @@ function monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names,
       const shift = byNurse.get(state.name)?.get(date) ?? "";
       if (!shift) return "";
       const charged = charges.has(`${state.name}|${date}`);
-      return `<strong class="member-duty-shift shift-${escapeHtml(shift)} ${charged ? "is-charge" : ""}">${escapeHtml(shift)}</strong>`;
+      const relaxed = relaxationCells.has(`${state.name}|${date}`);
+      return `<strong class="member-duty-shift shift-${escapeHtml(shift)} ${charged ? "is-charge" : ""} ${relaxed ? "is-relaxed" : ""}">${escapeHtml(shift)}</strong>`;
     }
     return CALENDAR_GROUPS.map(([shift, label]) => {
       const dutyNames = names.filter((name) => byNurse.get(name)?.get(date) === shift);
@@ -1066,8 +1164,10 @@ function monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names,
       const remaining = dutyNames.length - visibleNames.length;
       const visibleMarkup = visibleNames.map((name) => {
         const charged = charges.has(`${name}|${date}`);
+        const relaxed = relaxationCells.has(`${name}|${date}`);
         const helper = helpers.has(name) ? '<span class="helper-tag">헬퍼</span>' : "";
         const nameMarkup = `${escapeHtml(name)}${helper}`;
+        if (relaxed) return `<span class="member-relaxation-name">${nameMarkup}</span>`;
         return charged ? `<span class="member-charge-name">${nameMarkup}</span>` : nameMarkup;
       }).join(", ");
       if (!remaining) return `<div class="member-duty-group"><strong>${escapeHtml(label)}</strong><span>${visibleMarkup}</span></div>`;
@@ -1090,7 +1190,7 @@ function monthlyScheduleCalendarHTML({ dates, holidays, charges, byNurse, names,
     </div>`;
 }
 
-function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, showCounts, regionRow = null, candidate = new Map()) {
+function tableRow(name, dates, holidays, highlights, charges, relaxationCells, helpers, shiftAt, showCounts, regionRow = null, candidate = new Map()) {
   const isHelper = helpers.has(name);
   const counts = { D: 0, E: 0, N: 0, O: 0, 연차: 0 };
   const cells = dates
@@ -1106,6 +1206,8 @@ function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, 
       // 표 보기에서는 차지에 굵기만 주고 별표는 생략(달력뷰에만 표시).
       if (charges.has(`${name}|${date}`)) classes.push("charge-cell");
       const key = `${name}|${date}`;
+      const relaxationCategories = relaxationCells.get(key) ?? [];
+      if (relaxationCategories.length) classes.push("relaxation-cell");
       const manualOverride = isManualOverride(name, date);
       if (manualOverride) classes.push("manual-override");
       if (editDraft?.edits.has(key)) classes.push("pending-edit");
@@ -1114,7 +1216,12 @@ function tableRow(name, dates, holidays, highlights, charges, helpers, shiftAt, 
       if (changed) classes.push("region-preview-changed");
       const selected = regionSelection && regionRow != null && regionRow >= regionSelection.rowStart && regionRow <= regionSelection.rowEnd && colIndex >= regionSelection.colStart && colIndex <= regionSelection.colEnd;
       if (selected) classes.push("region-selected");
-      const attrs = regionRow == null ? "" : ` data-region-row="${regionRow}" data-region-col="${colIndex}" data-nurse="${escapeHtml(name)}" data-date="${date}"`;
+      const relaxationTitle = relaxationCategories.length
+        ? ` title="일회성 완화 적용: ${escapeHtml(relaxationCategories.join(", "))}"`
+        : "";
+      const attrs = regionRow == null
+        ? relaxationTitle
+        : ` data-region-row="${regionRow}" data-region-col="${colIndex}" data-nurse="${escapeHtml(name)}" data-date="${date}"${relaxationTitle}`;
       const content = changed ? `<span class="region-old-shift">${escapeHtml(shift)}</span><strong>${escapeHtml(nextShift)}</strong>` : escapeHtml(shift);
       const isEditing = editingCell?.nurse_name === name && editingCell?.date === date;
       const editor = isEditing ? `
@@ -1156,6 +1263,37 @@ function summaryBlock() {
       ${metric(current.objective_value ?? "-", "목적값")}
       ${metric(validation, "검증")}
     </div>
+  `;
+}
+
+function relaxationSummaryBlock() {
+  if (!state.isAdmin) return "";
+  const labels = {
+    off_cap: "오프 감소",
+    n_then_1off: "N 후 1OFF (E/N)",
+    nod: "N-O-D",
+    four_consecutive_n: "연속 나이트 4일",
+    weekday_weekend: "평일 근무자 주말 근무",
+  };
+  const usageKeys = {
+    off_cap: "relax_off_cap",
+    n_then_1off: "relax_n_then_1off",
+    nod: "relax_nod",
+    four_consecutive_n: "relax_four_consecutive_n",
+    weekday_weekend: "relax_weekday_weekend",
+  };
+  const actual = Object.entries(current.relaxation_actual_nurses ?? [])
+    .filter(([, names]) => names?.length);
+  if (!actual.length) return "";
+  const rows = actual.map(([key, names]) => {
+    const used = current.relaxation_usage?.[usageKeys[key]] ?? 0;
+    return `<li><strong>${escapeHtml(labels[key] ?? key)}</strong> · ${escapeHtml(names.join(", "))} · 실제 사용 ${escapeHtml(used)}회</li>`;
+  }).join("");
+  return `
+    <section class="panel relaxation-result" style="margin-bottom:1rem">
+      <strong>이번 생성의 일회성 완화</strong>
+      <ul class="plain-list">${rows}</ul>
+    </section>
   `;
 }
 

@@ -40,6 +40,26 @@ WEIGHT_AL_EXCESS = 10
 WEIGHT_AL_BALANCE = 40  # 연차를 균등하게 — 최대 연차 인원 최소화  # 연차 1인 1개 초과분
 WEIGHT_TRINITY_A_PAIR_SHORTFALL = 30_000
 WEIGHT_TRINITY_A_PAIR_CONCENTRATION = 8_000
+# 하드 제약을 이번 생성에만 풀 때도 위반량을 최우선으로 줄인다. 일반 선호 벌점보다
+# 충분히 크게 두되, 강제 듀티 신청은 계속 하드 제약으로 유지한다.
+# 일회성 완화의 상대 순서. 실제 최적화는 solver의 단계식 목표로 보장하고, 이 가중치는
+# 결과의 일반 소프트 벌점 집계에서도 정책 순서를 읽을 수 있게 한다.
+WEIGHT_RELAXATION_OTHER = 40_000
+WEIGHT_RELAXATION_NOD = 50_000
+WEIGHT_RELAXATION_OFF_CAP = 100_000
+
+RELAXATION_OFF_CAP = "relax_off_cap"
+RELAXATION_N_AFTER_ONE_OFF = "relax_n_then_1off"
+RELAXATION_NOD = "relax_nod"
+RELAXATION_FOUR_CONSECUTIVE_N = "relax_four_consecutive_n"
+RELAXATION_WEEKDAY_WEEKEND = "relax_weekday_weekend"
+RELAXATION_CATEGORIES = frozenset({
+    RELAXATION_OFF_CAP,
+    RELAXATION_N_AFTER_ONE_OFF,
+    RELAXATION_NOD,
+    RELAXATION_FOUR_CONSECUTIVE_N,
+    RELAXATION_WEEKDAY_WEEKEND,
+})
 
 # 병동별 제약 설정 기본값 — 병동마다 다르게 켜고 끌 수 있다.
 # (월간 오프 목표는 항상 적용되는 규칙이라 설정에 없음.
@@ -80,6 +100,10 @@ class ScheduleModel:
         use_assumptions: bool = False,
         settings: dict | None = None,
         relaxed_off_cap_nurses: frozenset[str] = frozenset(),
+        relaxed_n_then_1off_nurses: frozenset[str] = frozenset(),
+        relaxed_nod_nurses: frozenset[str] = frozenset(),
+        relaxed_four_consecutive_n_nurses: frozenset[str] = frozenset(),
+        relaxed_weekday_weekend_nurses: frozenset[str] = frozenset(),
         n_rest_days: int = 2,
     ):
         self.model = cp_model.CpModel()
@@ -96,6 +120,14 @@ class ScheduleModel:
         # core/constraints.py의 하드 규칙 자체를 바꾸는 게 아니라, 관리자가 그때그때
         # 명시적으로 고른 예외만 반영한다 — AGENTS.md "솔버 하드 제약" 항목 참고.
         self.relaxed_off_cap_nurses = relaxed_off_cap_nurses
+        # n_rest_days=1 is retained only for direct legacy callers. The UI/API
+        # uses the scoped selections below, which deliberately never allow S.
+        self.relaxed_n_then_1off_nurses = (
+            frozenset(n.name for n in nurses) if n_rest_days == 1 else relaxed_n_then_1off_nurses
+        )
+        self.relaxed_nod_nurses = relaxed_nod_nurses
+        self.relaxed_four_consecutive_n_nurses = relaxed_four_consecutive_n_nurses
+        self.relaxed_weekday_weekend_nurses = relaxed_weekday_weekend_nurses
         self.n_rest_days = n_rest_days
         # use_assumptions=False(기본): 모든 Tier1을 무조건 하드로 적용, presolve가 완전히
         # 동작해 훨씬 빠르고 좋은 해를 찾음 (일반적인 생성 경로).
@@ -106,6 +138,9 @@ class ScheduleModel:
 
         self.shift_vars: dict[tuple[str, date], dict[ShiftType, cp_model.IntVar]] = {}
         self.penalties: list[tuple[str, int, object]] = []  # (category, weight, var/expr)
+        # (category, nurse_name, visible_day_or_None, var/expr).  결과 화면은 이
+        # 정보를 사용해 "동의한 사람"이 아니라 실제 완화가 발생한 사람만 표시한다.
+        self.relaxation_events: list[tuple[str, str, date | None, object]] = []
         self.assumptions: dict[str, cp_model.IntVar] = {}
         self.duty_request_by_assumption: dict[str, DutyRequest] = {}
         self._lookback_set = set(lookback_days)
@@ -269,12 +304,49 @@ class ScheduleModel:
                     conds.append(cur)
                 if not isinstance(nxt, int):
                     conds.append(nxt.Not())
-                for offset in range(1, self.n_rest_days + 1):
+                # 첫날 휴식은 안전 규칙으로 항상 유지한다. 둘째 날만, 선택한 종류의
+                # 예외에 한해 해당 듀티를 허용하고 그 실제 사용량에 큰 벌점을 준다.
+                for offset in (1,):
                     target = day + timedelta(days=offset)
                     if (nurse.name, target) not in self.shift_vars:
                         continue
                     rest_t = self.rest_val(nurse.name, target)
                     self._enforce(self.model.Add(rest_t == 1), *conds)
+                second_day = day + timedelta(days=2)
+                if (nurse.name, second_day) not in self.shift_vars:
+                    continue
+                rest_second = self.rest_val(nurse.name, second_day)
+                allowed_second: set[ShiftType] = set()
+                if self.n_rest_days == 1:
+                    # Legacy direct callers used this as an all-member N-O-X
+                    # switch. Keep it for compatibility only; the API never
+                    # supplies this value.
+                    allowed_second.update((ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S))
+                elif nurse.name in self.relaxed_n_then_1off_nurses:
+                    # Explicit consent: N-O-E and N-O-N only. D is governed
+                    # by the stricter, separately consented N-O-D option.
+                    allowed_second.update((ShiftType.E, ShiftType.N))
+                if nurse.name in self.relaxed_nod_nurses:
+                    allowed_second.add(ShiftType.D)
+                if not allowed_second:
+                    self._enforce(self.model.Add(rest_second == 1), *conds)
+                    continue
+                for shift in (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S):
+                    if shift not in allowed_second:
+                        self._enforce(self.model.Add(self.val(nurse.name, second_day, shift) == 0), *conds)
+                for shift in allowed_second:
+                    violation = self.model.NewBoolVar(
+                        f"relax_n_second_{shift.value}_{nurse.name}_{day.isoformat()}"
+                    )
+                    self.model.Add(violation >= self.val(nurse.name, second_day, shift)).OnlyEnforceIf(
+                        [item for item in conds if item is not None]
+                    )
+                    if shift is ShiftType.D:
+                        category, weight = RELAXATION_NOD, WEIGHT_RELAXATION_NOD
+                    else:
+                        category, weight = RELAXATION_N_AFTER_ONE_OFF, WEIGHT_RELAXATION_OTHER
+                    self.penalties.append((category, weight, violation))
+                    self.relaxation_events.append((category, nurse.name, second_day, violation))
 
     def _rule_e_then_d_forbidden(self):
         lit = self._assumption("e_then_d")
@@ -315,7 +387,18 @@ class ScheduleModel:
                 if not any((nurse.name, d) in self.shift_vars for d in win):
                     continue
                 n_sum = sum(self.val(nurse.name, d, ShiftType.N) for d in win)
-                self._enforce(self.model.Add(n_sum <= max_n), lit)
+                if nurse.name in self.relaxed_four_consecutive_n_nurses:
+                    self._enforce(self.model.Add(n_sum <= max_n + 1), lit)
+                    excess = self.model.NewIntVar(0, 1, f"relax_n4_{nurse.name}_{i}")
+                    self.model.Add(excess >= n_sum - max_n)
+                    self.penalties.append((
+                        RELAXATION_FOUR_CONSECUTIVE_N, WEIGHT_RELAXATION_OTHER, excess
+                    ))
+                    self.relaxation_events.append((
+                        RELAXATION_FOUR_CONSECUTIVE_N, nurse.name, win[-1], excess
+                    ))
+                else:
+                    self._enforce(self.model.Add(n_sum <= max_n), lit)
 
     def _rule_allowed_shifts(self):
         lit = self._assumption("allowed_shifts")
@@ -481,7 +564,19 @@ class ScheduleModel:
             for day in self.current_days:
                 if day.weekday() < 5:
                     continue
-                self._enforce(self.model.Add(self.rest_val(nurse.name, day) == 1), lit)
+                if nurse.name in self.relaxed_weekday_weekend_nurses:
+                    working = sum(
+                        self.val(nurse.name, day, shift)
+                        for shift in (ShiftType.D, ShiftType.E, ShiftType.N, ShiftType.S)
+                    )
+                    self.penalties.append((
+                        RELAXATION_WEEKDAY_WEEKEND, WEIGHT_RELAXATION_OTHER, working
+                    ))
+                    self.relaxation_events.append((
+                        RELAXATION_WEEKDAY_WEEKEND, nurse.name, day, working
+                    ))
+                else:
+                    self._enforce(self.model.Add(self.rest_val(nurse.name, day) == 1), lit)
 
     def _rule_al_target(self):
         lit = self._assumption("al_target")
@@ -510,8 +605,22 @@ class ScheduleModel:
                 # 관리자가 이번 생성 한 번만 완화하기로 고른 사람 — 목표보다 적게(더 일해서
                 # 인원 부족을 메우는 방향)는 허용하되, 초과는 여전히 금지한다.
                 self._enforce(self.model.Add(o_count <= target), lit)
+                shortfall = self.model.NewIntVar(0, target, f"relax_off_cap_{nurse.name}")
+                self.model.Add(shortfall == target - o_count)
+                self.penalties.append((RELAXATION_OFF_CAP, WEIGHT_RELAXATION_OFF_CAP, shortfall))
+                self.relaxation_events.append((RELAXATION_OFF_CAP, nurse.name, None, shortfall))
             else:
                 self._enforce(self.model.Add(o_count == target), lit)
+
+        # 오프를 줄이기로 선택한 사람에게만 적용한다. 감소량이 필요할 때 한 사람에게
+        # 몰리지 않도록 어떤 두 사람의 감소량도 1일 이상 차이 나지 않게 한다.
+        selected_shortfalls = [
+            var for category, _weight, var in self.penalties if category == RELAXATION_OFF_CAP
+        ]
+        for index, left in enumerate(selected_shortfalls):
+            for right in selected_shortfalls[index + 1:]:
+                self.model.Add(left - right <= 1)
+                self.model.Add(right - left <= 1)
 
     def apply_assumptions(self):
         """(진단 모드 전용) 모든 Tier1 카테고리를 True로 가정 (Infeasible 원인 진단용)."""
@@ -888,5 +997,12 @@ class ScheduleModel:
             self.penalties.append(("exception_request", WEIGHT_TIER3_EXCEPTION, violation))
 
     # -------------------------------------------------------------- misc --
-    def objective_terms(self):
-        return [weight * var for _, weight, var in self.penalties]
+    def objective_terms(self, *, include_relaxations: bool = True):
+        return [
+            weight * var
+            for category, weight, var in self.penalties
+            if include_relaxations or category not in RELAXATION_CATEGORIES
+        ]
+
+    def relaxation_terms(self, categories: set[str] | frozenset[str]):
+        return [var for category, _weight, var in self.penalties if category in categories]

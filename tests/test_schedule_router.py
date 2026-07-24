@@ -434,6 +434,42 @@ def test_generate_allows_missing_prev_month_input(monkeypatch):
     assert captured["history"] == {}
 
 
+def test_generate_with_relaxations_passes_each_scoped_selection(monkeypatch):
+    state = {
+        "year": 2026, "month": 8, "schedule_revision": 0,
+        "nurses": [Nurse("A"), Nurse("B")], "duty_requests": [],
+        "manual_overrides": {}, "prev_month_inputs": {},
+    }
+    captured = {}
+    monkeypatch.setattr(schedule_router, "load_ward_state", lambda _: state)
+    monkeypatch.setattr(schedule_router, "save_ward_state", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_requirements", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_off_target", lambda *_: {})
+    monkeypatch.setattr(schedule_router, "_infeasibility_messages", lambda *_: [])
+    monkeypatch.setattr(schedule_router, "_schedule_out", lambda *_: None)
+    monkeypatch.setattr(schedule_router, "_solver_settings", lambda *_: {})
+
+    def fake_generate(*_args, **kwargs):
+        captured.update(kwargs)
+        return ScheduleResult(feasible=False)
+
+    monkeypatch.setattr(schedule_router, "generate_schedule", fake_generate)
+    body = schedule_router.GenerateRelaxationsIn(
+        relax_off_cap_for=["A", "B"],
+        relax_n_then_1off_for=["A"],
+        relax_nod_for=["B"],
+        relax_four_consecutive_n_for=["A"],
+        relax_weekday_weekend_for=["B"],
+    )
+    schedule_router.generate_with_relaxations(body, CurrentUser("ward", "admin", True))
+
+    assert captured["relaxed_off_cap_nurses"] == frozenset({"A", "B"})
+    assert captured["relaxed_n_then_1off_nurses"] == frozenset({"A"})
+    assert captured["relaxed_nod_nurses"] == frozenset({"B"})
+    assert captured["relaxed_four_consecutive_n_nurses"] == frozenset({"A"})
+    assert captured["relaxed_weekday_weekend_nurses"] == frozenset({"B"})
+
+
 def test_generate_passes_prev_month_history_to_solver(monkeypatch):
     state = {
         "year": 2026,

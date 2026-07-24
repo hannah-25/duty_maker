@@ -250,7 +250,12 @@ class GenerateRelaxationsIn(BaseModel):
     """생성이 infeasible일 때, 관리자가 이번 한 번만 고른 하드 제약 완화."""
 
     relax_off_cap_for: list[str] = Field(default_factory=list)
-    relax_n_then_1off: bool = False
+    # 각 배열이 비어 있으면 해당 완화에 동의하지 않은 것이다. "전체 적용"도
+    # 프론트에서 대상자의 이름을 모두 담아 보내므로, 서버에는 항상 명시적 대상만 온다.
+    relax_n_then_1off_for: list[str] = Field(default_factory=list)
+    relax_nod_for: list[str] = Field(default_factory=list)
+    relax_four_consecutive_n_for: list[str] = Field(default_factory=list)
+    relax_weekday_weekend_for: list[str] = Field(default_factory=list)
 
 
 class ClearOverridesIn(BaseModel):
@@ -320,6 +325,8 @@ class ScheduleOut(BaseModel):
     assistant_rows: list[AssistantRowOut] = Field(default_factory=list)
     charge_cells: list[str] = Field(default_factory=list)  # 차지 배정 셀 "이름|날짜"
     helper_names: list[str] = Field(default_factory=list)  # 외부 헬퍼 이름
+    weekday_only_names: list[str] = Field(default_factory=list)
+    night_eligible_names: list[str] = Field(default_factory=list)
     # 아래 항목은 관리자에게만 채워진다.
     checklist: list[ChecklistItemOut] = Field(default_factory=list)
     total_requests: int = 0
@@ -328,6 +335,10 @@ class ScheduleOut(BaseModel):
     dropped_off_count: int = 0
     s_eligible_names: list[str] = Field(default_factory=list)
     manual_override_cells: list[str] = Field(default_factory=list)
+    relaxations: dict[str, list[str]] = Field(default_factory=dict)
+    relaxation_usage: dict[str, float] = Field(default_factory=dict)
+    relaxation_actual_nurses: dict[str, list[str]] = Field(default_factory=dict)
+    relaxation_cells: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ScheduleDraftValidationOut(BaseModel):

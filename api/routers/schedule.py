@@ -457,6 +457,16 @@ def _schedule_out(ss: dict, user: CurrentUser) -> ScheduleOut:
         assistant_rows=assistant_rows,
         charge_cells=_charge_cells(ss, result),
         helper_names=[n.name for n in ss.get("nurses", []) if n.is_helper],
+        weekday_only_names=[n.name for n in ss.get("nurses", []) if n.weekday_only],
+        night_eligible_names=[
+            n.name
+            for n in ss.get("nurses", [])
+            if not n.allowed_shifts or ShiftType.N in n.allowed_shifts
+        ],
+        relaxations=dict(result.relaxations),
+        relaxation_usage=dict(result.relaxation_usage),
+        relaxation_actual_nurses=dict(result.relaxation_actual_nurses),
+        relaxation_cells=dict(result.relaxation_cells),
         s_eligible_names=[
             n.name
             for n in ss.get("nurses", [])
@@ -490,6 +500,10 @@ def _run_generate(
     user: CurrentUser,
     *,
     relaxed_off_cap_nurses: frozenset[str] = frozenset(),
+    relaxed_n_then_1off_nurses: frozenset[str] = frozenset(),
+    relaxed_nod_nurses: frozenset[str] = frozenset(),
+    relaxed_four_consecutive_n_nurses: frozenset[str] = frozenset(),
+    relaxed_weekday_weekend_nurses: frozenset[str] = frozenset(),
     n_rest_days: int = 2,
 ) -> ScheduleOut:
     nurses = ss.get("nurses", [])
@@ -515,6 +529,10 @@ def _run_generate(
         settings=_solver_settings(ss, user),
         fixed_assignments=_manual_assignments(ss, year, month),
         relaxed_off_cap_nurses=relaxed_off_cap_nurses,
+        relaxed_n_then_1off_nurses=relaxed_n_then_1off_nurses,
+        relaxed_nod_nurses=relaxed_nod_nurses,
+        relaxed_four_consecutive_n_nurses=relaxed_four_consecutive_n_nurses,
+        relaxed_weekday_weekend_nurses=relaxed_weekday_weekend_nurses,
         n_rest_days=n_rest_days,
     )
     # infeasible_categories는 원본 코드 그대로 저장한다 — 사람이 읽는 문구·완화 버튼용 원본
@@ -541,11 +559,29 @@ def generate_with_relaxations(
 ) -> ScheduleOut:
     """생성이 막혔을 때 관리자가 고른 완화를 이번 한 번만 적용해 다시 생성한다."""
     ss = load_ward_state(user.ward_id)
+    names = {nurse.name for nurse in ss.get("nurses", [])}
+
+    def selected(field_name: str, selected_names: list[str]) -> frozenset[str]:
+        unknown = sorted(set(selected_names) - names)
+        if unknown:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{field_name}에 존재하지 않는 구성원이 포함되어 있습니다: {', '.join(unknown)}",
+            )
+        return frozenset(selected_names)
+
     return _run_generate(
         ss,
         user,
-        relaxed_off_cap_nurses=frozenset(body.relax_off_cap_for),
-        n_rest_days=1 if body.relax_n_then_1off else 2,
+        relaxed_off_cap_nurses=selected("오프 감소", body.relax_off_cap_for),
+        relaxed_n_then_1off_nurses=selected("N 후 1OFF", body.relax_n_then_1off_for),
+        relaxed_nod_nurses=selected("N-O-D", body.relax_nod_for),
+        relaxed_four_consecutive_n_nurses=selected(
+            "연속 나이트 4일", body.relax_four_consecutive_n_for
+        ),
+        relaxed_weekday_weekend_nurses=selected(
+            "평일 근무자 주말 근무", body.relax_weekday_weekend_for
+        ),
     )
 
 

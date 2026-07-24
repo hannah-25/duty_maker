@@ -137,6 +137,10 @@ def _result_to_dict(r: ScheduleResult) -> dict:
         "dropped_duty_requests": [_request_to_dict(req) for req in r.dropped_duty_requests],
         "honored_duty_requests": [_request_to_dict(req) for req in r.honored_duty_requests],
         "objective_value": r.objective_value,
+        "relaxations": {key: list(names) for key, names in r.relaxations.items()},
+        "relaxation_usage": dict(r.relaxation_usage),
+        "relaxation_actual_nurses": {key: list(names) for key, names in r.relaxation_actual_nurses.items()},
+        "relaxation_cells": {key: list(cells) for key, cells in r.relaxation_cells.items()},
     }
 
 
@@ -152,6 +156,12 @@ def _result_from_dict(d: dict) -> ScheduleResult:
         dropped_duty_requests=[_request_from_dict(r) for r in d.get("dropped_duty_requests", [])],
         honored_duty_requests=[_request_from_dict(r) for r in d.get("honored_duty_requests", [])],
         objective_value=d.get("objective_value"),
+        relaxations={key: list(names) for key, names in d.get("relaxations", {}).items()},
+        relaxation_usage=dict(d.get("relaxation_usage", {})),
+        relaxation_actual_nurses={
+            key: list(names) for key, names in d.get("relaxation_actual_nurses", {}).items()
+        },
+        relaxation_cells={key: list(cells) for key, cells in d.get("relaxation_cells", {}).items()},
     )
 
 

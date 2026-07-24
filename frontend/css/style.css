@@ -886,6 +886,9 @@ kbd {
 .member-duty-shift.is-charge,
 .member-charge-name { border-radius: 3px; background: #fff3d6; }
 .member-charge-name { display: inline-block; padding: 0 .05rem; white-space: nowrap; }
+.member-duty-shift.is-relaxed,
+.member-relaxation-name { border-radius: 3px; background: #ffe3a3; color: #7a4200; }
+.member-relaxation-name { display: inline-block; padding: 0 .05rem; white-space: nowrap; }
 .member-duty-group { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: .15rem; width: 100%; font-size: .66rem; line-height: 1.25; }
 .member-duty-group > strong { color: var(--brand-700); white-space: nowrap; }
 .member-duty-group > span { overflow-wrap: anywhere; }
@@ -1364,6 +1367,25 @@ kbd {
   font-weight: 800;
 }
 
+.relaxation-cell {
+  position: relative;
+  box-shadow: inset 0 0 0 2px #d78300;
+}
+
+.relaxation-cell::after {
+  content: "완화";
+  position: absolute;
+  right: 0.08rem;
+  top: 0.05rem;
+  padding: 0.02rem 0.16rem;
+  border-radius: 3px;
+  background: #fff0c7;
+  color: #854d00;
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
 .helper-tag {
   display: inline-block;
   font-size: 0.62rem;
@@ -1630,6 +1652,13 @@ kbd {
     background: #fff3d6;
   }
 
+  .calendar-table .cal-name-line.is-relaxed {
+    padding: 0.03rem 0.05rem;
+    border-radius: 3px;
+    background: #ffe3a3;
+    color: #7a4200;
+  }
+
   .calendar-table .cal-name .helper-tag {
     margin-left: 0.1rem;
   }
@@ -1738,6 +1767,86 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+}
+
+.relaxation-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.relaxation-block--off {
+  border-color: #d89c47;
+  background: #fffaf1;
+}
+
+.relaxation-block > summary {
+  cursor: pointer;
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.relaxation-block__content {
+  padding-top: 0.85rem;
+}
+
+.relaxation-block__title {
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.relax-option-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.relax-option {
+  border-top: 1px solid var(--line);
+  padding-top: 0.7rem;
+}
+
+.relax-option:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.relax-option__consent {
+  font-weight: 700;
+}
+
+.relax-option__note {
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.relax-option__scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.relax-option__scope legend {
+  width: 100%;
+  margin-bottom: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+}
+
+.relax-option__members {
+  width: 100%;
+  margin: 0.15rem 0 0;
+}
+
+.relaxation-submit {
+  margin-top: -0.1rem;
 }
 
 .fix-card {
